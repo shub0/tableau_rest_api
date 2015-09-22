@@ -2158,9 +2158,6 @@ class TableauRestApi(TableauBase):
         if content_type not in [u'workbook', u'datasource']:
             raise InvalidOptionException(u"content_type must be 'workbook' or 'datasource'")
 
-        # Check if project_luid exists
-        self.query_project_by_luid(project_luid)
-
         file_extension = None
         final_filename = None
         cleanup_temp_file = False
@@ -2400,9 +2397,7 @@ class RestXmlRequest(TableauBase):
             if self.__publish_content is not None:
                 request.add_data(self.__publish_content)
             elif self.__xml_request is not None:
-                self.log(u'Is __xml_request a unicode?: {}'.format(unicode(isinstance(self.__xml_request, unicode))))
                 encoded_request = self.__xml_request.encode('utf8')
-                self.log(u'Is encoded_request a string?: {}'.format(unicode(isinstance(encoded_request, str))))
                 request.add_data(encoded_request)
             else:
                 request.add_data("")
@@ -2429,7 +2424,8 @@ class RestXmlRequest(TableauBase):
             if self.__response_type == u'binary':
                 self.__raw_response = initial_response
                 return initial_response
-            # Use HTMLPasrser to get rid of the escaped unicode sequences, then encode the thing as utf-8
+
+            # Use HTMLParser to get rid of the escaped unicode sequences, then encode the thing as utf-8
             parser = HTMLParser()
             unicode_raw_response = parser.unescape(initial_response)
 
@@ -2484,7 +2480,7 @@ class RestXmlRequest(TableauBase):
         if self.__response_type == 'xml':
             if self.__raw_response == '':
                 return True
-            utf8_parser = etree.XMLParser(encoding='utf-8')
+            utf8_parser = etree.XMLParser(encoding='utf-8', recover=True)
             xml = etree.parse(StringIO(self.__raw_response), parser=utf8_parser)
             # Set the XML object to the first returned. Will be replaced if there is pagination
             self.__xml_object = xml
@@ -2559,7 +2555,7 @@ class GranteeCapabilities:
             u'WebAuthoring': None,
             u'Write': None
         }
-        self.__allowable_modes = ['Allow', 'Deny', None]
+        self.__allowable_modes = [u'Allow', u'Deny', None]
         self.__server_to_rest_capability_map = {
             u'Add Comment': u'AddComment',
             u'Move': u'ChangeHierarchy',
@@ -2569,6 +2565,8 @@ class GranteeCapabilities:
             u'View Summary Data': u'ExportData',
             u'Export Image': u'ExportImage',
             u'Download': u'ExportXml',
+            u'Download/Save As': u'ExportXml',
+            u'Save As': u'ExportXml',
             u'Filter': u'Filter',
             u'Project Leader': u'ProjectLeader',
             u'View': u'Read',
@@ -2578,6 +2576,16 @@ class GranteeCapabilities:
             u'Web Edit': u'WebAuthoring',
             u'Save': u'Write'
             }
+
+        self.__role_map = [
+            u'Viewer',
+            u'Interactor',
+            u'Editor',
+            u'Data Source Connector',
+            u'Data Source Editor',
+            u'Publisher',
+            u'Project Leader'
+        ]
 
     def set_capability(self, capability_name, mode):
         if mode not in self.__allowable_modes:
@@ -2624,6 +2632,50 @@ class GranteeCapabilities:
     def set_all_to_allow(self):
         for cap in self.__capabilities:
             self.__capabilities[cap] = u'Allow'
+
+    def set_capabilities_to_match_role(self, role):
+        if role not in self.__role_map:
+            raise InvalidOptionException(u'{} is not a recognized role'.format(role))
+        if role == u'Publisher':
+            self.set_all_to_allow()
+            self.set_capability(u'Connect', None)
+            self.set_capability(u'Download', None)
+            self.set_capability(u'Move', None)
+            self.set_capability(u'Delete', None)
+            self.set_capability(u'Set Permissions', None)
+            self.set_capability(u'Project Leader', None)
+        elif role == u'Interactor':
+            self.set_all_to_allow()
+            self.set_capability(u'Connect', None)
+            self.set_capability(u'Download', None)
+            self.set_capability(u'Move', None)
+            self.set_capability(u'Delete', None)
+            self.set_capability(u'Set Permissions', None)
+            self.set_capability(u'Project Leader', None)
+            self.set_capability(u'Save', None)
+        elif role == u'Viewer':
+            self.set_capability(u'View', u'Allow')
+            self.set_capability(u'Export Image', u'Allow')
+            self.set_capability(u'View Summary Data', u'Allow')
+            self.set_capability(u'View Comments', u'Allow')
+            self.set_capability(u'Add Comment', u'Allow')
+        elif role == u'Editor':
+            self.set_all_to_allow()
+            self.set_capability(u'Connect', None)
+            self.set_capability(u'Project Leader', None)
+        elif role == u'Data Source Connector':
+            self.set_capability(u'View', u'Allow')
+            self.set_capability(u'Connect', u'Allow')
+        elif role == u'Data Source Editor':
+            self.set_capability(u'View', u'Allow')
+            self.set_capability(u'Connect', u'Allow')
+            self.set_capability(u'Save', u'Allow')
+            self.set_capability(u'Download', u'Allow')
+            self.set_capability(u'Delete', u'Allow')
+            self.set_capability(u'Set Permissions', u'Allow')
+        elif role == u'Project Leader':
+            self.set_capability(u'Project Leader', u'Allow')
+
 
 # Represents a TWBX or TDSX and allows manipulation of the XML objects inside via their related object
 class TableauPackagedFile(TableauBase):
