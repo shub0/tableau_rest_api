@@ -2019,7 +2019,7 @@ class TableauRestApi(TableauBase):
         self.start_log_block()
         user_luids = self.to_list(user_luid_s)
         for user_luid in user_luids:
-            url = self.build_api_url(u"groups/{}/users/{}".format(user_luid, group_luid))
+            url = self.build_api_url(u"groups/{}/users/{}".format(group_luid, user_luid))
             self.send_delete_request(url)
         self.end_log_block()
 
