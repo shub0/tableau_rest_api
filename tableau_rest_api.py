@@ -20,11 +20,179 @@ import shutil
 import sys
 from HTMLParser import HTMLParser
 
-# Implements logging features across all objects
-class TableauBase:
-    def __init__(self):
-        self.logger = None
 
+# Implements logging features across all objects
+class TableauBase(object):
+    def __init__(self, tableau_server_version):
+        """
+        :type tableau_server_version: unicode
+        """
+        self.logger = None
+        self.luid_pattern = r"[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*"
+
+        # API Versioning (starting in 9.2)
+        if unicode(tableau_server_version)in [u"9.2", u"9.3"]:
+            self.api_version = u"2.1"
+            self.tableau_namespace = u'http://tableau.com/api'
+            self.ns_map = {'t': 'http://tableau.com/api'}
+            self.version = tableau_server_version
+            self.ns_prefix = '{' + self.ns_map['t'] + '}'
+        elif unicode(tableau_server_version) in [u"9.0", u"9.1"]:
+            self.api_version = u"2.0"
+            self.tableau_namespace = u'http://tableausoftware.com/api'
+            self.ns_map = {'t': 'http://tableausoftware.com/api'}
+            self.version = tableau_server_version
+            self.ns_prefix = '{' + self.ns_map['t'] + '}'
+        else:
+            raise InvalidOptionException(u"Please specify tableau_server_version as a string. '9.0' or '9.2' etc...")
+
+        self.site_roles = (
+            u'Interactor',
+            u'Publisher',
+            u'SiteAdministrator',
+            u'Unlicensed',
+            u'UnlicensedWithPublish',
+            u'Viewer',
+            u'ViewerWithPublish',
+            u'ServerAdministrator'
+        )
+
+        self.server_content_roles = {
+            u"2.0": {
+                u"project": (
+                    u'Viewer',
+                    u'Interactor',
+                    u'Editor',
+                    u'Data Source Connector',
+                    u'Data Source Editor',
+                    u'Publisher',
+                    u'Project Leader'
+                ),
+                u"workbook": (
+                    u'Viewer',
+                    u'Interactor',
+                    u'Editor'
+                ),
+                u"datasource": (
+                    u'Data Source Connector',
+                    u'Data Source Editor'
+                )
+            },
+            u"2.1": {
+                u"project": (
+                    u'Viewer',
+                    u'Publisher',
+                    u'Project Leader'
+                ),
+                u"workbook": (
+                    u'Viewer',
+                    u'Interactor',
+                    u'Editor'
+                ),
+                u"datasource": (
+                    u'Editor',
+                    u'Connector'
+                )
+            }
+        }
+
+        self.server_to_rest_capability_map = {
+            u'Add Comment': u'AddComment',
+            u'Move': u'ChangeHierarchy',
+            u'Set Permissions': u'ChangePermissions',
+            u'Connect': u'Connect',
+            u'Delete': u'Delete',
+            u'View Summary Data': u'ExportData',
+            u'Export Image': u'ExportImage',
+            u'Download': u'ExportXml',
+            u'Filter': u'Filter',
+            u'Project Leader': u'ProjectLeader',
+            u'View': u'Read',
+            u'Share Customized': u'ShareView',
+            u'View Comments': u'ViewComments',
+            u'View Underlying Data': u'ViewUnderlyingData',
+            u'Web Edit': u'WebAuthoring',
+            u'Save': u'Write',
+            u'all': u'all'  # special command to do everything
+        }
+
+        self.available_capabilities = {
+            u"2.0": {
+                u"project": (
+                    u'AddComment',
+                    u'ChangeHierarchy',
+                    u'ChangePermissions',
+                    u'Connect',
+                    u'Delete',
+                    u'ExportData',
+                    u'ExportImage',
+                    u'ExportXml',
+                    u'Filter',
+                    u'ProjectLeader',
+                    u'Read',
+                    u'ShareView',
+                    u'ViewComments',
+                    u'ViewUnderlyingData',
+                    u'WebAuthoring',
+                    u'Write'
+                ),
+                u"workbook": (
+                    u'AddComment',
+                    u'ChangeHierarchy',
+                    u'ChangePermissions',
+                    u'Delete',
+                    u'ExportData',
+                    u'ExportImage',
+                    u'ExportXml',
+                    u'Filter',
+                    u'Read',
+                    u'ShareView',
+                    u'ViewComments',
+                    u'ViewUnderlyingData',
+                    u'WebAuthoring',
+                    u'Write'
+                ),
+                u"datasource": (
+                    u'ChangePermissions',
+                    u'Connect',
+                    u'Delete',
+                    u'ExportXml',
+                    u'Read',
+                    u'Write'
+                )
+            },
+            u"2.1": {
+                u"project": (u'ProjectLeader', u"Read", u"Write"),
+                u"workbook": (
+                    u'AddComment',
+                    u'ChangeHierarchy',
+                    u'ChangePermissions',
+                    u'Delete',
+                    u'ExportData',
+                    u'ExportImage',
+                    u'ExportXml',
+                    u'Filter',
+                    u'Read',
+                    u'ShareView',
+                    u'ViewComments',
+                    u'ViewUnderlyingData',
+                    u'WebAuthoring',
+                    u'Write'
+                ),
+                u"datasource": (
+                    u'ChangePermissions',
+                    u'Connect',
+                    u'Delete',
+                    u'ExportXml',
+                    u'Read',
+                    u'Write'
+                )
+            }
+        }
+
+        self.permissionable_objects = (u'datasource', u'project', u'workbook')
+
+    # Logging Methods
     def enable_logging(self, logger_obj):
         if isinstance(logger_obj, Logger):
             self.logger = logger_obj
@@ -49,7 +217,204 @@ class TableauBase:
         if self.logger is not None:
             self.logger.log_xml_request(verb, xml)
 
-class Logger:
+    # Method to handle single str or list and return a list
+    @staticmethod
+    def to_list(x):
+        if isinstance(x, (str, unicode)):
+            l = [x]  # Make single into a collection
+        else:
+            l = x
+        return l
+
+    # Method to read file in x MB chunks for upload, 10 MB by default (1024 bytes = KB, * 1024 = MB, * 10)
+    @staticmethod
+    def read_file_in_chunks(file_object, chunk_size=(1024 * 1024 * 10)):
+        while True:
+            data = file_object.read(chunk_size)
+            if not data:
+                break
+            yield data
+
+    # You must generate a boundary string that is used both in the headers and the generated request that you post.
+    # This builds a simple 30 hex digit string
+    @staticmethod
+    def generate_boundary_string():
+        random_digits = [random.SystemRandom().choice('0123456789abcdef') for n in xrange(30)]
+        s = "".join(random_digits)
+        return s
+
+    # URI is different form actual URL you need to load a particular view in iframe
+    @staticmethod
+    def convert_view_content_url_to_embed_url(content_url):
+        split_url = content_url.split('/')
+        return 'views/' + split_url[0] + "/" + split_url[2]
+
+    # Generic method for XML lists for the "query" actions to name -> id dict
+    @staticmethod
+    def convert_xml_list_to_name_id_dict(lxml_obj):
+        d = {}
+        for element in lxml_obj:
+            e_id = element.get("id")
+            # If list is collection, have to run one deeper
+            if e_id is None:
+                for list_element in element:
+                    e_id = list_element.get("id")
+                    name = list_element.get("name")
+                    d[name] = e_id
+            else:
+                name = element.get("name")
+                d[name] = e_id
+        return d
+
+    # Convert a permission
+    def convert_server_permission_name_to_rest_permission(self, permission_name):
+        if permission_name in self.server_to_rest_capability_map:
+            return self.server_to_rest_capability_map[permission_name]
+        else:
+            raise InvalidOptionException(u'{} is not a permission name on the Tableau Server'.format(permission_name))
+
+    # 32 hex characters with 4 dashes
+    def is_luid(self, val):
+        if len(val) == 36:
+            if re.match(self.luid_pattern, val) is not None:
+                return True
+            else:
+                return False
+        else:
+            return False
+
+    # Looks at LUIDs in new_obj_list, if they exist in the dest_obj, compares their gcap objects, if match returns True
+    def are_capabilities_objs_identical_for_matching_luids(self, new_obj_list, dest_obj_list):
+        self.start_log_block()
+        # Create a dict with the LUID as the keys for sorting and comparison
+        new_obj_dict = {}
+        for obj in new_obj_list:
+            new_obj_dict[obj.get_luid()] = obj
+
+        dest_obj_dict = {}
+        for obj in dest_obj_list:
+            dest_obj_dict[obj.get_luid()] = obj
+
+        new_obj_luids = new_obj_dict.keys()
+        dest_obj_luids = dest_obj_dict.keys()
+
+        if set(dest_obj_luids).issuperset(new_obj_luids):
+            # At this point, we know the new_objs do exist on the current obj, so let's see if they are identical
+            for luid in new_obj_luids:
+                new_obj = new_obj_dict.get(luid)
+                dest_obj = dest_obj_dict.get(luid)
+
+                self.log(u"Capabilities to be set:")
+                new_obj_cap_dict = new_obj.get_capabilities_dict()
+                self.log(unicode(new_obj_cap_dict))
+                self.log(u"Capabilities that were originally set:")
+                dest_obj_cap_dict = dest_obj.get_capabilities_dict()
+                self.log(unicode(dest_obj_cap_dict))
+                if new_obj_cap_dict == dest_obj_cap_dict:
+                    self.end_log_block()
+                    return True
+                else:
+                    self.end_log_block()
+                    return False
+        else:
+            self.end_log_block()
+            return False
+
+    # Determine if capabilities are already set identically (or identically enough) to skip
+    def are_capabilities_obj_lists_identical(self, new_obj_list, dest_obj_list):
+        # Grab the LUIDs of each, determine if they match in the first place
+
+        # Create a dict with the LUID as the keys for sorting and comparison
+        new_obj_dict = {}
+        for obj in new_obj_list:
+            new_obj_dict[obj.get_luid()] = obj
+
+        dest_obj_dict = {}
+        for obj in dest_obj_list:
+            dest_obj_dict[obj.get_luid()] = obj
+            # If lengths don't match, they must differ
+            if len(new_obj_dict) != len(dest_obj_dict):
+                return False
+            else:
+                # If LUIDs don't match, they must differ
+                new_obj_luids = new_obj_dict.keys()
+                dest_obj_luids = dest_obj_dict.keys()
+                new_obj_luids.sort()
+                dest_obj_luids.sort()
+                if cmp(new_obj_luids, dest_obj_luids) != 0:
+                    return False
+                for luid in new_obj_luids:
+                    new_obj = new_obj_dict.get(luid)
+                    dest_obj = dest_obj_dict.get(luid)
+                    return self.are_capabilities_obj_dicts_identical(new_obj.get_capabilities_dict(),
+                                                                     dest_obj.get_capabilities_dict())
+
+    @staticmethod
+    def are_capabilities_obj_dicts_identical(new_obj_dict, dest_obj_dict):
+        if cmp(new_obj_dict, dest_obj_dict):
+            return True
+        else:
+            return False
+
+    # Dict { capability_name : mode } into XML with checks for validity. Set type to 'workbook' or 'datasource'
+    def build_capabilities_xml_from_dict(self, capabilities_dict, obj_type):
+        if obj_type not in self.permissionable_objects:
+            error_text = u'objtype can only be "project", "workbook" or "datasource", was given {}'
+            raise InvalidOptionException(error_text.format(u'obj_type'))
+        xml = u'<capabilities>\n'
+        for cap in capabilities_dict:
+            # Skip if the capability is set to None
+            if capabilities_dict[cap] is None:
+                continue
+            if capabilities_dict[cap] not in [u'Allow', u'Deny']:
+                raise InvalidOptionException(u'Capability mode can only be "Allow",  "Deny" (case-sensitive)')
+            if obj_type == u'project':
+                if cap not in self.available_capabilities[self.api_version][u"project"]:
+                    raise InvalidOptionException(u'{} is not a valid capability for a project'.format(cap))
+            if obj_type == u'datasource':
+                # Ignore if not available for datasource
+                if cap not in self.available_capabilities[self.api_version][u"datasource"]:
+                    self.log(u'{} is not a valid capability for a datasource'.format(cap))
+                    continue
+            if obj_type == u'workbook':
+                # Ignore if not available for workbook
+                if cap not in self.available_capabilities[self.api_version][u"workbook"]:
+                    self.log(u'{} is not a valid capability for a workbook'.format(cap))
+                    continue
+            xml += u'<capability name="{}" mode="{}" />'.format(cap, capabilities_dict[cap])
+        xml += u'</capabilities>'
+        return xml
+
+    # Turns lxml that is returned when asking for permissions into a bunch of GranteeCapabilities objects
+    def convert_capabilities_xml_into_obj_list(self, lxml_obj, obj_type=None):
+        self.start_log_block()
+        obj_list = []
+        xml = lxml_obj.xpath(u'//t:granteeCapabilities', namespaces=self.ns_map)
+        if len(xml) == 0:
+            return []
+        else:
+            for gcaps in xml:
+                for tags in gcaps:
+                    # Namespace fun
+                    if tags.tag == u'{}group'.format(self.ns_prefix):
+                        luid = tags.get('id')
+                        gcap_obj = GranteeCapabilities(u'group', luid, obj_type)
+                        self.log(u'group {}'.format(luid))
+                    elif tags.tag == u'{}user'.format(self.ns_prefix):
+                        luid = tags.get('id')
+                        gcap_obj = GranteeCapabilities(u'user', luid, obj_type)
+                        self.log(u'user {}'.format(luid))
+                    elif tags.tag == u'{}capabilities'.format(self.ns_prefix):
+                        for caps in tags:
+                            self.log(caps.get('name') + ' : ' + caps.get('mode'))
+                            gcap_obj.set_capability(caps.get('name'), caps.get('mode'))
+                obj_list.append(gcap_obj)
+            self.log(u'Gcap object list has {} items'.format(unicode(len(obj_list))))
+            self.end_log_block()
+            return obj_list
+
+
+class Logger(object):
     def __init__(self, filename):
         try:
             lh = open(filename, 'wb')
@@ -79,16 +444,19 @@ class Logger:
         self.__log_handle.write(log_line.encode('utf-8'))
 
     def log_uri(self, uri, verb):
-        self.log(u'Sending {} request via: {}'.format(verb, uri))
+        self.log(u'Sending {} request via: \n{}'.format(verb, uri))
 
     def log_xml_request(self, xml, verb):
-        self.log(u'Sending {} request with XML: {}'.format(verb, xml))
+        self.log(u'Sending {} request with XML: \n{}'.format(verb, xml))
+
 
 class TableauRestApi(TableauBase):
     # Defines a class that represents a RESTful connection to Tableau Server. Use full URL (http:// or https://)
-    def __init__(self, server, username, password, site_content_url=""):
+    def __init__(self, server, username, password, site_content_url="", tableau_server_version="9.2"):
+        super(self.__class__, self).__init__(tableau_server_version)
         if server.find('http') == -1:
             raise InvalidOptionException('Server URL must include http:// or https://')
+
         self.__server = server
         self._site_content_url = site_content_url
         self.__username = username
@@ -100,63 +468,15 @@ class TableauRestApi(TableauBase):
         self.__last_error = None
         self.logger = None
         self.__last_response_content_type = None
-        self.__luid_pattern = r"[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*"
-        self.__tableau_namespace = u'http://tableausoftware.com/api'
-        self.__project_caps = (u'ProjectLeader', )
-        self.__datasource_caps = (
-            u'ChangePermissions',
-            u'Connect',
-            u'Delete',
-            u'ExportXml',
-            u'Read',
-            u'Write'
-        )
-        self.__workbook_caps = (
-            u'AddComment',
-            u'ChangeHierarchy',
-            u'ChangePermissions',
-            u'Delete',
-            u'ExportData',
-            u'ExportImage',
-            u'ExportXml',
-            u'Filter',
-            u'Read',
-            u'ShareView',
-            u'ViewComments',
-            u'ViewUnderlyingData',
-            u'WebAuthoring',
-            u'Write'
-        )
-        self.__site_roles = (
-            u'Interactor',
-            u'Publisher',
-            u'SiteAdministrator',
-            u'Unlicensed',
-            u'UnlicensedWithPublish',
-            u'Viewer',
-            u'ViewerWithPublish',
-            u'ServerAdministrator'
-        )
-        self.__permissionable_objects = [u'datasource', u'project', u'workbook']
-        self.__ns_map = {'t': 'http://tableausoftware.com/api'}
-        self.__server_to_rest_capability_map = {
-            u'Add Comment': u'AddComment',
-            u'Move': u'ChangeHierarchy',
-            u'Set Permissions': u'ChangePermissions',
-            u'Connect': u'Connect',
-            u'Delete': u'Delete',
-            u'View Summary Data': u'ExportData',
-            u'Export Image': u'ExportImage',
-            u'Download': u'ExportXml',
-            u'Filter': u'Filter',
-            u'Project Leader': u'ProjectLeader',
-            u'View': u'Read',
-            u'Share Customized': u'ShareView',
-            u'View Comments': u'ViewComments',
-            u'View Underlying Data': u'ViewUnderlyingData',
-            u'Web Edit': u'WebAuthoring',
-            u'Save': u'Write'
-        }
+
+
+        # All defined in TableauBase superclass
+        self.__project_caps = self.available_capabilities[self.api_version][u"project"]
+        self.__datasource_caps = self.available_capabilities[self.api_version][u"datasource"]
+        self.__workbook_caps = self.available_capabilities[self.api_version][u"workbook"]
+        self.__site_roles = self.site_roles
+        self.__permissionable_objects = self.permissionable_objects
+        self.__server_to_rest_capability_map = self.server_to_rest_capability_map
 
     #
     # Object helpers and setter/getters
@@ -169,84 +489,15 @@ class TableauRestApi(TableauBase):
     def set_last_error(self, error):
         self.__last_error = error
 
-    # Method to handle single str or list and return a list
-    @staticmethod
-    def to_list(x):
-        if isinstance(x, (str, unicode)):
-            l = [x]  # Make single into a collection
-        else:
-            l = x
-        return l
-
-    # Method to read file in x MB chunks for upload, 10 MB by default (1024 bytes = KB, * 1024 = MB, * 10)
-    @staticmethod
-    def __read_file_in_chunks(file_object, chunk_size=(1024 * 1024 * 10)):
-        while True:
-            data = file_object.read(chunk_size)
-            if not data:
-                break
-            yield data
-
-    # You must generate a boundary string that is used both in the headers and the generated request that you post.
-    # This builds a simple 30 hex digit string
-    @staticmethod
-    def generate_boundary_string():
-        random_digits = [random.SystemRandom().choice('0123456789abcdef') for n in xrange(30)]
-        s = "".join(random_digits)
-        return s
-
-    # Convert a permission
-    def convert_server_permission_name_to_rest_permission(self, permission_name):
-        if permission_name in self.__server_to_rest_capability_map:
-            return self.__server_to_rest_capability_map[permission_name]
-        else:
-            raise InvalidOptionException(u'{} is not a permission name on the Tableau Server'.format(permission_name))
-
-    # 32 hex characters with 4 dashes
-    def is_luid(self, val):
-        if len(val) == 36:
-            if re.match(self.__luid_pattern, val) is not None:
-                return True
-            else:
-                return False
-        else:
-            return False
-
-    def get_lxml_ns_prefix(self):
-        return '{' + self.__ns_map['t'] + '}'
-
     #
     # REST API Helper Methods
     #
 
     def build_api_url(self, call, login=False):
         if login is True:
-            return self.__server + u"/api/2.0/" + call
+            return self.__server + u"/api/" + self.api_version + u"/" + call
         else:
-            return self.__server + u"/api/2.0/sites/" + self.__site_luid + u"/" + call
-
-    # URI is different form actual URL you need to load a particular view in iframe
-    @staticmethod
-    def convert_view_content_url_to_embed_url(content_url):
-        split_url = content_url.split('/')
-        return 'views/' + split_url[0] + "/" + split_url[2]
-
-    # Generic method for XML lists for the "query" actions to name -> id dict
-    @staticmethod
-    def convert_xml_list_to_name_id_dict(lxml_obj):
-        d = {}
-        for element in lxml_obj:
-            e_id = element.get("id")
-            # If list is collection, have to run one deeper
-            if e_id is None:
-                for list_element in element:
-                    e_id = list_element.get("id")
-                    name = list_element.get("name")
-                    d[name] = e_id
-            else:
-                name = element.get("name")
-                d[name] = e_id
-        return d
+            return self.__server + u"/api/" + self.api_version + u"/sites/" + self.__site_luid + u"/" + call
 
     #
     # Internal REST API Helpers (mostly XML definitions that are reused between methods)
@@ -286,63 +537,6 @@ class TableauRestApi(TableauBase):
             update_request += u'password="{}"'.format(new_connection_password)
         update_request += u"/></tsRequest>"
         return update_request
-
-    # Dict { capability_name : mode } into XML with checks for validity. Set type to 'workbook' or 'datasource'
-    def build_capabilities_xml_from_dict(self, capabilities_dict, obj_type):
-        if obj_type not in self.__permissionable_objects:
-            error_text = u'objtype can only be "project", "workbook" or "datasource", was given {}'
-            raise InvalidOptionException(error_text.format(u'obj_type'))
-        xml = u'<capabilities>\n'
-        for cap in capabilities_dict:
-            # Skip if the capability is set to None
-            if capabilities_dict[cap] is None:
-                continue
-            if capabilities_dict[cap] not in [u'Allow', u'Deny']:
-                raise InvalidOptionException(u'Capability mode can only be "Allow",  "Deny" (case-sensitive)')
-            if obj_type == u'project':
-                if cap not in self.__datasource_caps + self.__workbook_caps + self.__project_caps:
-                    raise InvalidOptionException(u'{} is not a valid capability in the REST API'.format(cap))
-            if obj_type == u'datasource':
-                # Ignore if not available for datasource
-                if cap not in self.__datasource_caps:
-                    self.log(u'{} is not a valid capability for a datasource'.format(cap))
-                    continue
-            if obj_type == u'workbook':
-                # Ignore if not available for workbook
-                if cap not in self.__workbook_caps:
-                    self.log(u'{} is not a valid capability for a workbook'.format(cap))
-                    continue
-            xml += u'<capability name="{}" mode="{}" />'.format(cap, capabilities_dict[cap])
-        xml += u'</capabilities>'
-        return xml
-
-    # Turns lxml that is returned when asking for permissions into a bunch of GranteeCapabilities objects
-    def convert_capabilities_xml_into_obj_list(self, lxml_obj):
-        self.start_log_block()
-        obj_list = []
-        xml = lxml_obj.xpath(u'//t:granteeCapabilities', namespaces=self.__ns_map)
-        if len(xml) == 0:
-            raise NoMatchFoundException(u"No granteeCapabilities tags found")
-        else:
-            for gcaps in xml:
-                for tags in gcaps:
-                    # Namespace fun
-                    if tags.tag == u'{}group'.format(self.get_lxml_ns_prefix()):
-                        luid = tags.get('id')
-                        gcap_obj = GranteeCapabilities(u'group', luid)
-                        self.log(u'group {}'.format(luid))
-                    elif tags.tag == u'{}user'.format(self.get_lxml_ns_prefix()):
-                        luid = tags.get('id')
-                        gcap_obj = GranteeCapabilities(u'user', luid)
-                        self.log(u'user {}'.format(luid))
-                    elif tags.tag == u'{}capabilities'.format(self.get_lxml_ns_prefix()):
-                        for caps in tags:
-                            self.log(caps.get('name') + ' : ' + caps.get('mode'))
-                            gcap_obj.set_capability(caps.get('name'), caps.get('mode'))
-                obj_list.append(gcap_obj)
-            self.log(u'Gcap object list has {} items'.format(unicode(len(obj_list))))
-            self.end_log_block()
-            return obj_list
 
     # Runs through the gcap object list, and tries to do a conversion all principals to matching LUIDs on current site
     # Use case is replicating settings from one site to another
@@ -386,72 +580,6 @@ class TableauRestApi(TableauBase):
             new_gcap_obj_list.append(new_gcap_obj)
         return new_gcap_obj_list
 
-    # Determine if capabilities are already set identically (or identically enough) to skip
-    @staticmethod
-    def are_capabilities_obj_lists_identical(new_obj_list, dest_obj_list):
-        # Grab the LUIDs of each, determine if they match in the first place
-
-        # Create a dict with the LUID as the keys for sorting and comparison
-        new_obj_dict = {}
-        for obj in new_obj_list:
-            new_obj_dict[obj.get_luid()] = obj
-
-        dest_obj_dict = {}
-        for obj in dest_obj_list:
-            dest_obj_dict[obj.get_luid()] = obj
-
-        # If lengths don't match, they must differ
-        if len(new_obj_dict) != len(dest_obj_dict):
-            return False
-        else:
-            # If LUIDs don't match, they must differ
-            new_obj_luids = new_obj_dict.keys()
-            dest_obj_luids = dest_obj_dict.keys()
-            new_obj_luids.sort()
-            dest_obj_luids.sort()
-            if cmp(new_obj_luids, dest_obj_luids) != 0:
-                return False
-            # Run through each to compare
-            else:
-                # At this point, we know they must match up
-                for luid in new_obj_luids:
-                    new_obj = new_obj_dict.get(luid)
-                    dest_obj = dest_obj_dict.get(luid)
-                    new_obj_cap_dict = new_obj.get_capabilities_dict()
-                    dest_obj_cap_dict = dest_obj.get_capabilities_dict()
-                    if cmp(new_obj_cap_dict, dest_obj_cap_dict):
-                        return True
-                    else:
-                        return False
-
-    # Looks at LUIDs in new_obj_list, if they exist in the dest_obj, compares their gcap objects, if match returns True
-    @staticmethod
-    def are_capabilities_objs_identical_for_matching_luids(new_obj_list, dest_obj_list):
-        # Create a dict with the LUID as the keys for sorting and comparison
-        new_obj_dict = {}
-        for obj in new_obj_list:
-            new_obj_dict[obj.get_luid()] = obj
-
-        dest_obj_dict = {}
-        for obj in dest_obj_list:
-            dest_obj_dict[obj.get_luid()] = obj
-
-        new_obj_luids = new_obj_dict.keys()
-        dest_obj_luids = dest_obj_dict.keys()
-
-        if set(dest_obj_luids).issuperset(new_obj_luids):
-            # At this point, we know the new_objs do exist on the current obj, so let's see if they are identical
-            for luid in new_obj_luids:
-                new_obj = new_obj_dict.get(luid)
-                dest_obj = dest_obj_dict.get(luid)
-                new_obj_cap_dict = new_obj.get_capabilities_dict()
-                dest_obj_cap_dict = dest_obj.get_capabilities_dict()
-                if cmp(new_obj_cap_dict, dest_obj_cap_dict):
-                    return True
-                else:
-                    return False
-        else:
-            return False
 #
     # Sign-in and Sign-out
     #
@@ -467,18 +595,18 @@ class TableauRestApi(TableauBase):
         url = self.build_api_url(u"auth/signin", login=True)
 
         self.log(u'Logging in via: {}'.format(url.encode('utf-8')))
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_xml_request(login_payload)
         api.set_http_verb('post')
         self.log(u'Login payload is\n {}'.format(login_payload))
         api.request_from_api(0)
         # self.log(api.get_raw_response())
         xml = api.get_response()
-        credentials_element = xml.xpath(u'//t:credentials', namespaces=self.__ns_map)
+        credentials_element = xml.xpath(u'//t:credentials', namespaces=self.ns_map)
         self.__token = credentials_element[0].get("token").encode('utf-8')
         self.log(u"Token is " + self.__token)
-        self.__site_luid = credentials_element[0].xpath(u"//t:site", namespaces=self.__ns_map)[0].get("id").encode('utf-8')
-        self.__user_luid = credentials_element[0].xpath(u"//t:user", namespaces=self.__ns_map)[0].get("id").encode('utf-8')
+        self.__site_luid = credentials_element[0].xpath(u"//t:site", namespaces=self.ns_map)[0].get("id").encode('utf-8')
+        self.__user_luid = credentials_element[0].xpath(u"//t:user", namespaces=self.ns_map)[0].get("id").encode('utf-8')
         self.log(u"Site ID is " + self.__site_luid)
         self.end_log_block()
 
@@ -486,7 +614,7 @@ class TableauRestApi(TableauBase):
         self.start_log_block()
         url = self.build_api_url(u"auth/signout", login=True)
         self.log(u'Logging out via: {}'.format(url.encode('utf-8')))
-        api = RestXmlRequest(url, False, self.logger)
+        api = RestXmlRequest(url, False, self.logger, ns_map_url=self.ns_map['t'])
         api.set_http_verb('post')
         api.request_from_api()
         self.log(u'Signed out successfully')
@@ -500,7 +628,7 @@ class TableauRestApi(TableauBase):
     def query_resource(self, url_ending, login=False):
         self.start_log_block()
         api_call = self.build_api_url(url_ending, login)
-        api = RestXmlRequest(api_call, self.__token, self.logger)
+        api = RestXmlRequest(api_call, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         self.log_uri(u'get', api_call)
         api.request_from_api()
         xml = api.get_response().getroot()  # return Element rather than ElementTree
@@ -509,7 +637,7 @@ class TableauRestApi(TableauBase):
 
     def send_post_request(self, url):
         self.start_log_block()
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_http_verb(u'post')
         api.request_from_api(0)
         xml = api.get_response().getroot()  # return Element rather than ElementTree
@@ -519,7 +647,7 @@ class TableauRestApi(TableauBase):
     def send_add_request(self, url, request):
         self.start_log_block()
         self.log_uri(u'add', url)
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_xml_request(request)
         self.log_xml_request(u'add', request)
         api.set_http_verb('post')
@@ -531,7 +659,7 @@ class TableauRestApi(TableauBase):
     def send_update_request(self, url, request):
         self.start_log_block()
         self.log_uri(u'update', url)
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_xml_request(request)
         api.set_http_verb(u'put')
         self.log_xml_request(u'update', request)
@@ -541,7 +669,7 @@ class TableauRestApi(TableauBase):
 
     def send_delete_request(self, url):
         self.start_log_block()
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_http_verb(u'delete')
         self.log_uri(u'delete', url)
         try:
@@ -560,7 +688,7 @@ class TableauRestApi(TableauBase):
     def send_publish_request(self, url, request, boundary_string):
         self.start_log_block()
         self.log_uri(u'publish', url)
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_publish_content(request, boundary_string)
         api.set_http_verb(u'post')
         api.request_from_api(0)
@@ -571,7 +699,7 @@ class TableauRestApi(TableauBase):
     def send_append_request(self, url, request, boundary_string):
         self.start_log_block()
         self.log_uri(u'append', url)
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_publish_content(request, boundary_string)
         api.set_http_verb(u'put')
         api.request_from_api(0)
@@ -582,7 +710,7 @@ class TableauRestApi(TableauBase):
     # Used when the result is not going to be XML and you want to save the raw response as binary
     def send_binary_get_request(self, url):
         self.start_log_block()
-        api = RestXmlRequest(url, self.__token, self.logger)
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         self.log_uri(u'binary get', url)
         api.set_http_verb(u'get')
         api.set_response_type(u'binary')
@@ -616,7 +744,7 @@ class TableauRestApi(TableauBase):
     def query_datasource_luid_by_name_in_project(self, name, p_name_or_luid=False):
         self.start_log_block()
         datasources = self.query_datasources()
-        datasources_with_name = datasources.xpath(u'//t:datasource[@name="{}"]'.format(name), namespaces=self.__ns_map)
+        datasources_with_name = datasources.xpath(u'//t:datasource[@name="{}"]'.format(name), namespaces=self.ns_map)
         if len(datasources_with_name) == 0:
             self.end_log_block()
             raise NoMatchFoundException(u"No datasource found with name {} in any project".format(name))
@@ -625,9 +753,9 @@ class TableauRestApi(TableauBase):
             return datasources_with_name[0].get("id")
         elif len(datasources_with_name) > 1 and p_name_or_luid is not False:
             if self.is_luid(p_name_or_luid):
-                ds_in_proj = datasources.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                ds_in_proj = datasources.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             else:
-                ds_in_proj = datasources.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                ds_in_proj = datasources.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             if len(ds_in_proj) == 0:
                 self.end_log_block()
                 raise NoMatchFoundException(u"No datasource found with name {} in project {}".format(name, p_name_or_luid))
@@ -675,7 +803,7 @@ class TableauRestApi(TableauBase):
             project_luid = self.query_project_luid_by_name(project_name_or_luid)
         datasources = self.query_datasources()
         # This brings back the datasource itself
-        ds_in_project = datasources.xpath(u'//t:project[@id="{}"]/..'.format(project_luid), namespaces=self.__ns_map)
+        ds_in_project = datasources.xpath(u'//t:project[@id="{}"]/..'.format(project_luid), namespaces=self.ns_map)
         self.end_log_block()
         return ds_in_project
 
@@ -749,7 +877,7 @@ class TableauRestApi(TableauBase):
     def query_group_by_luid(self, group_luid):
         self.start_log_block()
         groups = self.query_groups()
-        group = groups.xpath(u'//t:group[@id="{}"]'.format(group_luid), namespaces=self.__ns_map)
+        group = groups.xpath(u'//t:group[@id="{}"]'.format(group_luid), namespaces=self.ns_map)
         if len(group) == 1:
             self.end_log_block()
             return group[0]
@@ -761,7 +889,7 @@ class TableauRestApi(TableauBase):
     def query_group_luid_by_name(self, name):
         self.start_log_block()
         groups = self.query_groups()
-        group = groups.xpath(u'//t:group[@name="{}"]'.format(name), namespaces=self.__ns_map)
+        group = groups.xpath(u'//t:group[@name="{}"]'.format(name), namespaces=self.ns_map)
         if len(group) == 1:
             self.end_log_block()
             return group[0].get("id")
@@ -803,7 +931,7 @@ class TableauRestApi(TableauBase):
     def query_project_by_luid(self, luid):
         self.start_log_block()
         projects = self.query_projects()
-        project = projects.xpath(u'//t:project[@id="{}"]'.format(luid), namespaces=self.__ns_map)
+        project = projects.xpath(u'//t:project[@id="{}"]'.format(luid), namespaces=self.ns_map)
         if len(project) == 1:
             self.end_log_block()
             return project[0]
@@ -814,7 +942,7 @@ class TableauRestApi(TableauBase):
     def query_project_luid_by_name(self, name):
         self.start_log_block()
         projects = self.query_projects()
-        project = projects.xpath(u'//t:project[@name="{}"]'.format(name), namespaces=self.__ns_map)
+        project = projects.xpath(u'//t:project[@name="{}"]'.format(name), namespaces=self.ns_map)
         if len(project) == 1:
             self.end_log_block()
             return project[0].get("id")
@@ -828,6 +956,21 @@ class TableauRestApi(TableauBase):
         project = self.query_project_by_luid(luid)
         self.end_log_block()
         return project
+
+    def query_permissions_by_luid(self, obj_type, luid):
+        self.start_log_block()
+        perms = self.query_resource(u"{}s/{}/permissions".format(obj_type, luid))
+        self.end_log_block()
+        return perms
+
+    def query_default_permissions_by_project_luid(self, obj_type, p_luid):
+        self.start_log_block()
+        if self.api_version != "2.0":
+            perms = self.query_resource(u"projects/{}/default-permissions/{}s".format(obj_type, p_luid))
+        else:
+            raise InvalidOptionException("Default project permissions only exist in 9.2 and above, API version 2.1+")
+        self.end_log_block()
+        return perms
 
     # Simplest to use
     def query_project_permissions(self, name_or_luid):
@@ -851,6 +994,58 @@ class TableauRestApi(TableauBase):
         perms = self.query_project_permissions_by_luid(project_luid)
         self.end_log_block()
         return perms
+
+    def query_default_project_permissions_for_workbooks(self, name_or_luid):
+        self.start_log_block()
+        if self.is_luid(name_or_luid):
+            perms = self.query_default_project_permissions_for_workbooks_by_luid(name_or_luid)
+        else:
+            perms = self.query_default_project_permissions_for_workbooks_by_name(name_or_luid)
+        self.end_log_block()
+        return perms
+
+    def query_default_project_permissions_for_workbooks_by_luid(self, luid):
+        self.start_log_block()
+        if self.api_version != "2.0":
+            perms = self.query_resource(u"projects/{}/default-permissions/workbooks".format(luid))
+        else:
+            raise InvalidOptionException("Default project permissions only exist in 9.2 and above, API version 2.1+")
+        self.end_log_block()
+        return perms
+
+    def query_default_project_permissions_for_workbooks_by_name(self, name):
+        self.start_log_block()
+        project_luid = self.query_project_luid_by_name(name)
+        perms = self.query_default_project_permissions_for_workbooks_by_luid(project_luid)
+        self.enable_logging()
+        return perms
+
+    def query_default_project_permissions_for_datasources(self, name_or_luid):
+        self.start_log_block()
+        if self.is_luid(name_or_luid):
+            perms = self.query_default_project_permissions_for_datasources_by_luid(name_or_luid)
+        else:
+            perms = self.query_default_project_permissions_for_datasources_by_name(name_or_luid)
+        self.end_log_block()
+        return perms
+
+    def query_default_project_permissions_for_datasources_by_name(self, name):
+        self.start_log_block()
+        project_luid = self.query_project_luid_by_name(name)
+        perms = self.query_default_project_permissions_for_datasources_by_luid(project_luid)
+        self.end_log_block()
+        return perms
+
+    def query_default_project_permissions_for_datasources_by_luid(self, luid):
+        self.start_log_block()
+        if self.api_version != "2.0":
+            perms = self.query_resource(u"projects/{}/default-permissions/datasources".format(luid))
+        else:
+            raise InvalidOptionException("Default project permissions only exist in 9.2 and above, API version 2.1+")
+        self.end_log_block()
+        return perms
+
+
 
     #
     # End Project Querying Methods
@@ -963,7 +1158,7 @@ class TableauRestApi(TableauBase):
     def query_user_luid_by_username(self, username):
         self.start_log_block()
         users = self.query_users()
-        user = users.xpath(u'//t:user[@name="{}"]'.format(username), namespaces=self.__ns_map)
+        user = users.xpath(u'//t:user[@name="{}"]'.format(username), namespaces=self.ns_map)
         if len(user) == 1:
             self.end_log_block()
             return user[0].get("id")
@@ -1015,7 +1210,7 @@ class TableauRestApi(TableauBase):
     def query_workbook_for_username_by_workbook_name_in_project(self, username, wb_name, p_name_or_luid=False):
         self.start_log_block()
         workbooks = self.query_workbooks_by_username(username)
-        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.__ns_map)
+        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.ns_map)
         if len(workbooks_with_name) == 0:
             self.end_log_block()
             raise NoMatchFoundException(u"No workbook found for username '{}' named {}".format(username,wb_name))
@@ -1026,9 +1221,9 @@ class TableauRestApi(TableauBase):
             return wb
         elif len(workbooks_with_name) > 1 and p_name_or_luid is not False:
             if self.is_luid(p_name_or_luid):
-                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             else:
-                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             if len(wb_in_proj) == 0:
                 self.end_log_block()
                 raise NoMatchFoundException(u'No workbook found with name {} in project {}').format(wb_name, p_name_or_luid)
@@ -1051,7 +1246,7 @@ class TableauRestApi(TableauBase):
     def query_workbook_for_user_luid_by_workbook_name_in_project(self, user_luid, wb_name, p_name_or_luid=False):
         self.start_log_block()
         workbooks = self.query_workbooks_for_user_by_luid(user_luid)
-        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.__ns_map)
+        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.ns_map)
         if len(workbooks_with_name) == 0:
             self.end_log_block()
             raise NoMatchFoundException(u"No workbook found for user luid '{}' named {}".format(user_luid, wb_name))
@@ -1062,9 +1257,9 @@ class TableauRestApi(TableauBase):
             return wb
         elif len(workbooks_with_name) > 1 and p_name_or_luid is not False:
             if self.is_luid(p_name_or_luid):
-                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             else:
-                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             if len(wb_in_proj) == 0:
                 self.end_log_block()
                 raise NoMatchFoundException(u'No workbook found with name {} in project {}').format(wb_name, p_name_or_luid)
@@ -1091,7 +1286,7 @@ class TableauRestApi(TableauBase):
             project_luid = self.query_project_luid_by_name(project_name_or_luid)
         workbooks = self.query_workbooks_by_username(username)
         # This brings back the workbook itself
-        wbs_in_project = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(project_luid), namespaces=self.__ns_map)
+        wbs_in_project = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(project_luid), namespaces=self.ns_map)
         self.end_log_block()
         return wbs_in_project
 
@@ -1118,7 +1313,7 @@ class TableauRestApi(TableauBase):
     def query_workbook_luid_for_username_by_workbook_name_in_project(self, username, wb_name, p_name_or_luid=False):
         self.start_log_block()
         workbooks = self.query_workbooks_by_username(username)
-        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.__ns_map)
+        workbooks_with_name = workbooks.xpath(u'//t:workbook[@name="{}"]'.format(wb_name), namespaces=self.ns_map)
         if len(workbooks_with_name) == 0:
             self.end_log_block()
             raise NoMatchFoundException(u"No workbook found for username '{}' named {}".format(username, wb_name))
@@ -1128,9 +1323,9 @@ class TableauRestApi(TableauBase):
             return wb_luid
         elif len(workbooks_with_name) > 1 and p_name_or_luid is not False:
             if self.is_luid(p_name_or_luid):
-                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@id="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             else:
-                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.__ns_map)
+                wb_in_proj = workbooks.xpath(u'//t:project[@name="{}"]/..'.format(p_name_or_luid), namespaces=self.ns_map)
             if len(wb_in_proj) == 0:
                 self.end_log_block()
                 raise NoMatchFoundException(u'No workbook found with name {} in project {}').format(wb_name, p_name_or_luid)
@@ -1156,7 +1351,7 @@ class TableauRestApi(TableauBase):
         return wbs
 
     # Used the logged in username
-    def query_workbook_views_by_workbook_name_in_project(self, wb_name, usage=False, p_name_or_luid=False):
+    def query_workbook_views_by_workbook_name_in_project(self, wb_name, p_name_or_luid=False, usage=False):
         self.start_log_block()
         wb_luid = self.query_workbook_luid_for_username_by_workbook_name_in_project(self.__username, wb_name, p_name_or_luid)
         vws = self.query_workbook_views_by_luid(wb_luid, usage)
@@ -1403,7 +1598,7 @@ class TableauRestApi(TableauBase):
         url = self.build_api_url(u'users')
         try:
             new_user = self.send_add_request(url, add_request)
-            new_user_luid = new_user.xpath(u'//t:user', namespaces=self.__ns_map)[0].get("id")
+            new_user_luid = new_user.xpath(u'//t:user', namespaces=self.ns_map)[0].get("id")
             self.end_log_block()
             return new_user_luid
         # If already exists, update site role unless overridden.
@@ -1447,7 +1642,7 @@ class TableauRestApi(TableauBase):
         try:
             new_group = self.send_add_request(url, add_request)
             self.end_log_block()
-            return new_group.xpath(u'//t:group', namespaces=self.__ns_map)[0].get("id")
+            return new_group.xpath(u'//t:group', namespaces=self.ns_map)[0].get("id")
         # If the name already exists, a HTTP 409 throws, so just find and return the existing LUID
         except RecoverableHTTPException as e:
             if e.http_code == 409:
@@ -1472,26 +1667,29 @@ class TableauRestApi(TableauBase):
         response = self.send_add_request(url, add_request)
         # Response is different from immediate to background update. job ID lets you track progress on background
         if sync_as_background is True:
-            job = response.xpath(u'//t:job', namespaces=self.__ns_map)
+            job = response.xpath(u'//t:job', namespaces=self.ns_map)
             self.end_log_block()
             return job[0].get('id')
         if sync_as_background is False:
             self.end_log_block()
-            group = response.xpath(u'//t:group', namespaces=self.__ns_map)
+            group = response.xpath(u'//t:group', namespaces=self.ns_map)
             return group[0].get('id')
 
-    def create_project(self, project_name, project_desc=None):
+    def create_project(self, project_name, project_desc=None, locked_permissions=False):
         self.start_log_block()
         add_request = u'<tsRequest><project name="{}" '.format(project_name)
         if project_desc is not None:
-            add_request += u'description="{}"'.format(project_desc)
+            add_request += u'description="{}" '.format(project_desc)
+        # Only allow locked permissions in api versions 2.1 and higher
+        if locked_permissions is not False and self.api_version != '2.0':
+            add_request += u'contentPermissions="{}" '.format(u"LockedToProject")
         add_request += u" /></tsRequest>"
         self.log(add_request)
         url = self.build_api_url(u"projects")
         try:
             new_project = self.send_add_request(url, add_request)
             self.end_log_block()
-            return new_project.xpath(u'//t:project', namespaces=self.__ns_map)[0].get("id")
+            return new_project.xpath(u'//t:project', namespaces=self.ns_map)[0].get("id")
         except RecoverableHTTPException as e:
             if e.http_code == 409:
                 self.log(u'Project named {} already exists, finding and returning the LUID'.format(project_name))
@@ -1522,7 +1720,7 @@ class TableauRestApi(TableauBase):
         self.log(u'Creating a site using the following XML: {}'.format(add_request))
         self.log(u'Sending create request via: {}'.format(url))
         new_site = self.send_add_request(url, add_request)
-        return new_site.xpath(u'//t:site', namespaces=self.__ns_map)[0].get("id")
+        return new_site.xpath(u'//t:site', namespaces=self.ns_map)[0].get("id")
 
     # Take a single user_luid string or a collection of luid_strings
     def add_users_to_group_by_luid(self, user_luid_s, group_luid):
@@ -1562,6 +1760,13 @@ class TableauRestApi(TableauBase):
         self.end_log_block()
         return update_response
 
+    def query_user_favorites_by_luid(self, user_luid):
+        self.start_log_block()
+        url = self.build_api_url(u"favorites/{}/".format(user_luid))
+        get_response = self.send_update_request(url, u'<tsRequest></tsRequest>')
+        self.end_log_block()
+        return get_response
+
     def add_view_to_user_favorites_by_luid(self, favorite_name, view_luid, user_luid):
         self.start_log_block()
         request = u'<tsRequest><favorite label="{}"><view id="{}" />'.format(favorite_name, view_luid)
@@ -1594,14 +1799,18 @@ class TableauRestApi(TableauBase):
             url = self.build_api_url(u"{}s/{}/permissions".format(obj_type, obj_luid))
             self.send_update_request(url, request)
 
-    def add_permissions_by_gcap_obj_list(self, obj_type, obj_luid_s, gcap_obj_list):
+    def add_permissions_by_gcap_obj_list(self, obj_type, obj_luid_s, gcap_obj_list, default_proj_luid=None):
         if obj_type not in self.__permissionable_objects:
             raise InvalidOptionException(u'obj_type must be "workbook","datasource" or "project"')
 
         obj_luids = self.to_list(obj_luid_s)
 
         for obj_luid in obj_luids:
-            request = u"<tsRequest><permissions><{} id='{}' />".format(obj_type, obj_luid)
+            if default_proj_luid is None:
+                request = u"<tsRequest><permissions><{} id='{}' />".format(obj_type, obj_luid)
+            # Default permissions don't set an id. It's actualy unnecessary in later versions anyway
+            else:
+                request = u"<tsRequest><permissions>"
             for gcap_obj in gcap_obj_list:
                 gcap_luid = gcap_obj.get_luid()
                 gcap_obj_type = gcap_obj.get_obj_type()
@@ -1611,9 +1820,18 @@ class TableauRestApi(TableauBase):
                 request += capabilities_xml
                 request += u"</granteeCapabilities>"
             request += u"</permissions></tsRequest>"
-            url = self.build_api_url(u"{}s/{}/permissions".format(obj_type, obj_luid))
+            if default_proj_luid is None:
+                url = self.build_api_url(u"{}s/{}/permissions".format(obj_type, obj_luid))
+            else:
+                url = self.build_api_url(u"projects/{}/default-permissions/{}s".format(default_proj_luid, obj_type))
             self.send_update_request(url, request)
 
+    def add_default_permissions_to_project_by_gcap_obj_list(self, project_luid, obj_type, obj_luid_s, gcap_obj_list):
+        if self.api_version == "2.0":
+            raise InvalidOptionException("Add Default Permissions is only available in API version 2.1 and higher")
+        if obj_type not in [u"datasource", u"workbook"]:
+            raise InvalidOptionException(u'obj_type must be "workbook" or "datasource"')
+        self.add_permissions_by_gcap_obj_list(obj_type, obj_luid_s, gcap_obj_list, default_proj_luid=project_luid)
     #
     # End Add methods
     #
@@ -1756,31 +1974,41 @@ class TableauRestApi(TableauBase):
         response = self.send_update_request(url, request)
         # Response is different from immediate to background update. job ID lets you track progress on background
         if sync_as_background is True:
-            job = response.xpath(u'//t:job', namespaces=self.__ns_map)
+            job = response.xpath(u'//t:job', namespaces=self.ns_map)
             self.end_log_block()
             return job[0].get('id')
         if sync_as_background is False:
-            group = response.xpath(u'//t:group', namespaces=self.__ns_map)
+            group = response.xpath(u'//t:group', namespaces=self.ns_map)
             self.end_log_block()
             return group[0].get('id')
 
     # Simplest method
-    def update_project(self, name_or_luid, new_project_name=None, new_project_description=None):
+    def update_project(self, name_or_luid, new_project_name=None, new_project_description=None,
+                       locked_permissions=None):
         self.start_log_block()
         if self.is_luid(name_or_luid):
-            response = self.update_project_by_luid(name_or_luid, new_project_name, new_project_description)
+            response = self.update_project_by_luid(name_or_luid, new_project_name, new_project_description,
+                                                   locked_permissions)
         else:
-            response = self.update_project_by_name(name_or_luid, new_project_name, new_project_description)
+            response = self.update_project_by_name(name_or_luid, new_project_name, new_project_description,
+                                                   locked_permissions)
         self.end_log_block()
         return response
 
-    def update_project_by_luid(self, project_luid, new_project_name=None, new_project_description=None):
+    def update_project_by_luid(self, project_luid, new_project_name=None, new_project_description=None,
+                               locked_permissions=None):
         self.start_log_block()
         update_request = u'<tsRequest><project '
         if new_project_name is not None:
             update_request += u'name="{}" '.format(new_project_name)
         if new_project_description is not None:
             update_request += u'description="{}"'.format(new_project_description)
+        if locked_permissions in [True, False] and self.api_version == '2.0':
+            raise InvalidOptionException("Cannot a project to locked permissions prior to 9.2 , api version 2.1")
+        if locked_permissions is True and self.api_version != '2.0':
+            update_request += u'contentPermissions="{}" '.format(u"LockedToProject")
+        elif locked_permissions is False and self.api_version != '2.0':
+            update_request += u'contentPermissions="{}" '.format(u"ManagedByOwner")
         update_request += u"/></tsRequest>"
         self.log(update_request)
         url = self.build_api_url(u"projects/{}".format(project_luid))
@@ -1788,10 +2016,56 @@ class TableauRestApi(TableauBase):
         self.end_log_block()
         return response
 
-    def update_project_by_name(self, project_name, new_project_name=None, new_project_description=None):
+    def update_project_by_name(self, project_name, new_project_name=None, new_project_description=None,
+                               locked_permissions=None):
         self.start_log_block()
         project_luid = self.query_project_luid_by_name(project_name)
-        response = self.update_project_by_luid(project_luid, new_project_name, new_project_description)
+        response = self.update_project_by_luid(project_luid, new_project_name, new_project_description,
+                                               locked_permissions)
+        self.end_log_block()
+        return response
+
+    def lock_project_permissions(self, name_or_luid):
+        self.start_log_block()
+        if self.is_luid(name_or_luid):
+            response = self.lock_project_permissions_by_luid(name_or_luid)
+        else:
+            response = self.lock_project_permissions_by_name(name_or_luid)
+        self.end_log_block()
+        return response
+
+    def lock_project_permissions_by_luid(self, project_luid):
+        self.start_log_block()
+        response = self.update_project_by_luid(project_luid, locked_permissions=True)
+        self.end_log_block()
+        return response
+
+    def lock_project_permissions_by_name(self, project_name):
+        self.start_log_block()
+        project_luid = self.query_project_luid_by_name(project_name)
+        response = self.lock_project_permissions_by_luid(project_luid)
+        self.end_log_block()
+        return response
+
+    def unlock_project_permissions(self, name_or_luid):
+        self.start_log_block()
+        if self.is_luid(name_or_luid):
+            response = self.unlock_project_permissions_by_luid(name_or_luid)
+        else:
+            response = self.unlock_project_permissions_by_name(name_or_luid)
+        self.end_log_block()
+        return response
+
+    def unlock_project_permissions_by_luid(self, project_luid):
+        self.start_log_block()
+        response = self.update_project_by_luid(project_luid, locked_permissions=False)
+        self.end_log_block()
+        return response
+
+    def unlock_project_permissions_by_name(self, project_name):
+        self.start_log_block()
+        project_luid = self.query_project_luid_by_name(project_name)
+        response = self.unlock_project_permissions_by_luid(project_luid)
         self.end_log_block()
         return response
 
@@ -2051,8 +2325,8 @@ class TableauRestApi(TableauBase):
                 self.log(u'Deleting for object LUID {}'.format(luid))
                 # Check capabiltiies are allowed
                 for cap in permissions_dict:
-                    if cap not in self.__workbook_caps + self.__datasource_caps + self.__project_caps:
-                        raise InvalidOptionException(u"'{}' is not a capability in the REST API".format(cap))
+                    if obj_type == u'project' and cap not in self.__project_caps:
+                        raise InvalidOptionException(u"'{}' is not a valid capability for a project".format(cap))
                     if obj_type == u'datasource' and cap not in self.__datasource_caps:
                         self.log(u"'{}' is not a valid capability for a datasource".format(cap))
                     if obj_type == u'workbook' and cap not in self.__workbook_caps:
@@ -2061,12 +2335,52 @@ class TableauRestApi(TableauBase):
                     if permissions_dict.get(cap) == u'Allow':
                         # Delete Allow
                         url = self.build_api_url(u"{}s/{}/permissions/{}s/{}/{}/Allow".format(obj_type, obj_luid,
-                                                                                             luid_type, luid, cap))
+                                                                                              luid_type, luid, cap))
                         self.send_delete_request(url)
                     elif permissions_dict.get(cap) == u'Deny':
                         # Delete Deny
                         url = self.build_api_url(u"{}s/{}/permissions/{}s/{}/{}/Deny".format(obj_type, obj_luid,
-                                                                                            luid_type, luid, cap))
+                                                                                             luid_type, luid, cap))
+                        self.send_delete_request(url)
+                    else:
+                        self.log(u'{} set to none, no action'.format(cap))
+        self.end_log_block()
+
+    def delete_default_permissions_for_project_by_luids(self, project_luid, obj_type, obj_luid_s, luid_s,
+                                                        permissions_dict, luid_type='group'):
+        self.start_log_block()
+        if luid_type not in [u'group', u'user']:
+            raise InvalidOptionException(u"luid_type can only be 'group' or 'user'")
+        if obj_type not in self.__permissionable_objects:
+            raise InvalidOptionException(u'obj_type must be "workbook","datasource" or "project"')
+
+        luids = self.to_list(luid_s)
+        obj_luids = self.to_list(obj_luid_s)
+
+        for luid in luids:
+            self.log(u'Deleting for LUID {}'.format(luid))
+            for obj_luid in obj_luids:
+                self.log(u'Deleting for object LUID {}'.format(luid))
+                # Check capabiltiies are allowed
+                for cap in permissions_dict:
+                    if obj_type == u'project' and cap not in self.__project_caps:
+                        raise InvalidOptionException(u"'{}' is not a valid capability for a project".format(cap))
+                    if obj_type == u'datasource' and cap not in self.__datasource_caps:
+                        self.log(u"'{}' is not a valid capability for a datasource".format(cap))
+                    if obj_type == u'workbook' and cap not in self.__workbook_caps:
+                        self.log(u"'{}' is not a valid capability for a workbook".format(cap))
+
+                    if permissions_dict.get(cap) == u'Allow':
+                        # Delete Allow
+                        url = self.build_api_url(u"projects/{}/default-permissions/{}s/{}s/{}/{}/Allow".format(project_luid,
+                                                                                                   obj_type, luid_type,
+                                                                                                           luid, cap))
+                        self.send_delete_request(url)
+                    elif permissions_dict.get(cap) == u'Deny':
+                        # Delete Deny
+                        url = self.build_api_url(u"projects/{}/default-permissions/{}s/{}s/{}/{}/Deny".format(project_luid,
+                                                                                                  obj_type, luid_type,
+                                                                                                          luid, cap))
                         self.send_delete_request(url)
                     else:
                         self.log(u'{} set to none, no action'.format(cap))
@@ -2136,14 +2450,14 @@ class TableauRestApi(TableauBase):
                          connection_username=None, connection_password=None, save_credentials=True, show_tabs=True):
         xml = self.publish_content(u'workbook', workbook_filename, workbook_name, project_luid, overwrite,
                                    connection_username, connection_password, save_credentials, show_tabs=show_tabs)
-        workbook = xml.xpath(u'//t:workbook', namespaces=self.__ns_map)
+        workbook = xml.xpath(u'//t:workbook', namespaces=self.ns_map)
         return workbook[0].get('id')
 
     def publish_datasource(self, ds_filename, ds_name, project_luid, overwrite=False, connection_username=None,
                            connection_password=None, save_credentials=True):
         xml = self.publish_content(u'datasource', ds_filename, ds_name, project_luid, overwrite, connection_username,
                                    connection_password, save_credentials)
-        datasource = xml.xpath(u'//t:datasource', namespaces=self.__ns_map)
+        datasource = xml.xpath(u'//t:datasource', namespaces=self.ns_map)
         return datasource[0].get('id')
 
     # Main method for publishing a workbook. Should intelligently decide to chunk up if necessary
@@ -2163,17 +2477,20 @@ class TableauRestApi(TableauBase):
         cleanup_temp_file = False
         # If a packaged file object, save the file locally as a temp for upload, then treated as regular file
         if isinstance(content_filename, TableauPackagedFile):
+            self.log(u"Is a TableauPackedFile object, opening up")
             content_filename = content_filename.save_new_packaged_file(u'temp_packaged_file')
             cleanup_temp_file = True
 
         # If dealing with either of the objects that represent Tableau content
         if isinstance(content_filename, TableauDatasource):
+            self.log(u"Is a TableauDatasource object, opening up")
             file_extension = u'tds'
             # Set file size low so it uses single upload instead of chunked
             file_size_mb = 1
             content_file = StringIO(content_filename.get_datasource_xml())
             final_filename = content_name.replace(" ", "") + "." + file_extension
         elif isinstance(content_filename, TableauWorkbook):
+            self.log(u"Is a TableauWorkbook object, opening up")
             file_extension = u'twb'
             # Set file size low so it uses single upload instead of chunked
             file_size_mb = 1
@@ -2261,7 +2578,7 @@ class TableauRestApi(TableauBase):
             self.log(u"Greater than 10 MB, uploading in chunks")
             upload_session_id = self.initiate_file_upload()
 
-            for piece in self.__read_file_in_chunks(content_file):
+            for piece in self.read_file_in_chunks(content_file):
                 self.log(u"Appending chunk to upload session {}".format(upload_session_id))
                 self.append_to_file_upload(upload_session_id, piece, final_filename)
 
@@ -2278,15 +2595,16 @@ class TableauRestApi(TableauBase):
     def initiate_file_upload(self):
         url = self.build_api_url(u"fileUploads")
         xml = self.send_post_request(url)
-        file_upload = xml.xpath(u'//t:fileUpload', namespaces=self.__ns_map)
+        file_upload = xml.xpath(u'//t:fileUpload', namespaces=self.ns_map)
         return file_upload[0].get("uploadSessionId")
 
-    # Uploads a check to an already started session
+    # Uploads a chunk to an already started session
     def append_to_file_upload(self, upload_session_id, content, filename):
         boundary_string = self.generate_boundary_string()
         publish_request = "--{}\r\n".format(boundary_string)
         publish_request += 'Content-Disposition: name="request_payload"\r\n'
         publish_request += 'Content-Type: text/xml\r\n\r\n'
+        publish_request += '\r\n'
         publish_request += "--{}\r\n".format(boundary_string)
         publish_request += 'Content-Disposition: name="tableau_file"; filename="{}"\r\n'.format(
             filename)
@@ -2301,7 +2619,8 @@ class TableauRestApi(TableauBase):
 
 # Handles all of the actual HTTP calling
 class RestXmlRequest(TableauBase):
-    def __init__(self, url, token=None, logger=None):
+    def __init__(self, url, token=None, logger=None, ns_map_url='http://tableau.com/api'):
+        super(self.__class__, self).__init__(tableau_server_version=u"9.2")
         self.__defined_response_types = (u'xml', u'png', u'binary')
         self.__defined_http_verbs = (u'post', u'get', u'put', u'delete')
         self.__base_url = url
@@ -2312,7 +2631,7 @@ class RestXmlRequest(TableauBase):
         self.__last_url_request = None
         self.__last_response_headers = None
         self.__xml_object = None
-        self.__ns_map = {'t': 'http://tableausoftware.com/api'}
+        self.ns_map = {'t': ns_map_url}
         self.logger = logger
         self.__publish = None
         self.__boundary_string = None
@@ -2320,7 +2639,7 @@ class RestXmlRequest(TableauBase):
         self.__http_verb = None
         self.__response_type = None
         self.__last_response_content_type = None
-        self.__luid_pattern = r"[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*"
+        self.__luid_pattern = self.luid_pattern
 
         try:
             self.set_http_verb('get')
@@ -2366,7 +2685,7 @@ class RestXmlRequest(TableauBase):
 
     def get_response(self):
         if self.__response_type == 'xml' and self.__xml_object is not None:
-            self.log(u"XML Object Response: {}".format(etree.tostring(self.__xml_object, pretty_print=True, encoding='UTF-8').decode('utf8')))
+            self.log(u"XML Object Response:\n {}".format(etree.tostring(self.__xml_object, pretty_print=True, encoding='UTF-8').decode('utf8')))
             return self.__xml_object
         else:
             return self.__raw_response
@@ -2450,9 +2769,9 @@ class RestXmlRequest(TableauBase):
 
             utf8_parser = etree.XMLParser(encoding='utf-8')
             xml = etree.parse(StringIO(raw_error_response), parser=utf8_parser)
-            tableau_error = xml.xpath(u'//t:error', namespaces=self.__ns_map)
+            tableau_error = xml.xpath(u'//t:error', namespaces=self.ns_map)
             error_code = tableau_error[0].get('code')
-            tableau_detail = xml.xpath(u'//t:detail', namespaces=self.__ns_map)
+            tableau_detail = xml.xpath(u'//t:detail', namespaces=self.ns_map)
             detail_text = tableau_detail[0].text
             detail_luid_match_obj = re.search(self.__luid_pattern, detail_text)
             if detail_luid_match_obj:
@@ -2484,13 +2803,14 @@ class RestXmlRequest(TableauBase):
             xml = etree.parse(StringIO(self.__raw_response), parser=utf8_parser)
             # Set the XML object to the first returned. Will be replaced if there is pagination
             self.__xml_object = xml
-            for pagination in xml.xpath(u'//t:pagination', namespaces=self.__ns_map):
+            for pagination in xml.xpath(u'//t:pagination', namespaces=self.ns_map):
 
                 # page_number = int(pagination.get('pageNumber'))
                 page_size = int(pagination.get('pageSize'))
                 total_available = int(pagination.get('totalAvailable'))
                 total_pages = int(math.ceil(float(total_available) / float(page_size)))
-                combined_xml_string = u'<tsResponse xmlns="http://tableausoftware.com/api" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://tableausoftware.com/api http://tableausoftware.com/api/ts-api-2.0.xsd">'
+                combined_xml_string = u'<tsResponse xmlns="{}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="{} {}/ts-api-2.0.xsd">'.format(
+                    self.ns_map['t'], self.ns_map['t'], self.ns_map['t'])
                 full_xml_obj = None
                 for obj in xml.getroot():
                     if obj.tag != 'pagination':
@@ -2530,70 +2850,154 @@ class RestXmlRequest(TableauBase):
             return True
 
 
-# Represents the GranteeCapabilities from any given. Doesn't implement TableauBase because it's just a complex container
-class GranteeCapabilities:
-    def __init__(self, obj_type, luid):
+# Represents a published workbook, project or datasource
+class PublishedContent(TableauBase):
+    def __init__(self, luid, obj_type, tableau_rest_api_obj, tableau_server_version=u"9.2", default=False, logger_obj=None):
+        TableauBase.__init__(self, tableau_server_version)
+        """
+        :type tableau_rest_api_obj: TableauRestApi
+        """
+        self.logger = logger_obj
+        self.luid = luid
+        self.t_rest_api = tableau_rest_api_obj
+        if tableau_server_version in [u"9.2", u"9.3"]:
+            self.version = u"9.2"
+        elif tableau_server_version in [u"9.1", u"9.0"]:
+            self.version = u"9.1"
+        self.obj_type = obj_type
+        self.default = default
+        self.obj_perms_xml = None
+        self.current_gcap_obj_list = None
+        self.get_permissions_from_server()
+
+    def get_permissions_from_server(self, obj_perms_xml=None):
+        self.start_log_block()
+        if obj_perms_xml is not None:
+            self.obj_perms_xml = obj_perms_xml
+        else:
+            if self.default is False:
+                self.obj_perms_xml = self.t_rest_api.query_permissions_by_luid(self.obj_type, self.luid)
+            if self.default is True:
+                self.obj_perms_xml = self.t_rest_api.query_default_permissions_by_project_luid(self.luid, self.obj_type)
+        self.current_gcap_obj_list = self.t_rest_api.convert_capabilities_xml_into_obj_list(self.obj_perms_xml,
+                                                                                            self.obj_type)
+        self.start_log_block()
+
+    def get_permissions_xml(self):
+        return self.obj_perms_xml
+
+    def get_gcap_obj_list(self):
+        return self.current_gcap_obj_list
+
+    def set_permissions_by_gcap_obj(self, new_gcap_obj):
+        """
+        :type new_gcap_obj: GranteeCapabilities
+        """
+        self.start_log_block()
+        for cur_gcap_obj in self.current_gcap_obj_list:
+            # Check if there are any existing capabilities on the object
+            if cur_gcap_obj.get_luid() == new_gcap_obj.get_luid():
+                # Find if anything is set already, add to deletion queue
+                need_to_change = self.are_capabilities_obj_dicts_identical(
+                    cur_gcap_obj.get_capabilities_dict(), new_gcap_obj.get_capabilities_dict()
+                )
+                self.log(u"Existing permissions found for luid {}. Are there differences? {}".format(cur_gcap_obj.get_luid(),
+                                                                                                     str(need_to_change)))
+                # Delete all existing permissions
+                if need_to_change is True:
+                    self.log(u"Removing exisiting permissions for luid {}".format(cur_gcap_obj.get_luid()))
+                    if self.default is False:
+                        self.t_rest_api.delete_permissions_by_luids(self.obj_type, self.luid,
+                                                                    cur_gcap_obj.get_luid(),
+                                                                    cur_gcap_obj.get_capabilities_dict(),
+                                                                    cur_gcap_obj.get_obj_type()
+                                                                    )
+                    if self.default is True:
+                        self.t_rest_api.delete_default_permissions_for_project_by_luids(
+                                                                    self.luid, self.obj_type, [True, ],
+                                                                    cur_gcap_obj.get_luid(),
+                                                                    cur_gcap_obj.get_capabilities_dict(),
+                                                                    cur_gcap_obj.get_obj_type()
+                                                                    )
+                if need_to_change is False:
+                    self.end_log_block()
+                    return True
+        if self.default is False:
+            self.log(u"Adding permissions")
+            new_perms_xml = self.t_rest_api.add_permissions_by_gcap_obj_list(self.obj_type, self.luid, [new_gcap_obj, ])
+        if self.default is True:
+            self.log(u"Adding default permissions")
+            new_perms_xml = self.t_rest_api.add_default_permissions_to_project_by_gcap_obj_list(self.luid, self.obj_type,
+                                                                                [True, ], [new_gcap_obj, ])
+        # Update the internal representation from the newly returned permissions XML
+        self.get_permissions_from_server(new_perms_xml)
+        self.end_log_block()
+
+
+class Project(PublishedContent):
+    def __init__(self, luid, tableau_rest_api_obj, tableau_server_version=u"9.2", logger_obj=None):
+        PublishedContent.__init__(self, luid, u"project", tableau_rest_api_obj, tableau_server_version, logger_obj=logger_obj)
+        # projects in 9.2 have child workbook and datasource permissions
+        if self.api_version == u"2.1":
+                self.workbook_default = Workbook(self.luid, self.t_rest_api, default=True, logger_obj=logger_obj)
+                self.datasource_default = PublishedContent(self.luid, u"datasource", self.t_rest_api, default=True, logger_obj=logger_obj)
+        self.__available_capabilities = self.available_capabilities[self.api_version][u"project"]
+
+    def lock_permissions(self):
+        self.start_log_block()
+        if self.api_version == u"2.1":
+            self.t_rest_api.lock_project_permissions(self.luid)
+        else:
+            self.log(u"Permissions cannot be locked in 9.1 and previous")
+        self.end_log_block()
+
+    def unlock_permissions(self):
+        self.start_log_block()
+        if self.api_version == u"2.1":
+            self.t_rest_api.unlock_project_permissions(self.luid)
+        else:
+            self.log(u"Permissions cannot be locked in 9.1 and previous")
+        self.end_log_block()
+
+
+class Workbook(PublishedContent):
+    def __init__(self, luid, tableau_rest_api_obj, tableau_server_version=u"9.2", default=False, logger_obj=None):
+        PublishedContent.__init__(self, luid, u"workbook", tableau_rest_api_obj, tableau_server_version, default=default, logger_obj=logger_obj)
+        self.__available_capabilities = self.available_capabilities[self.api_version][u"workbook"]
+
+
+class Datasource(PublishedContent):
+    def __init__(self, luid, tableau_rest_api_obj, tableau_server_version=u"9.2", default=False, logger_obj=None):
+        PublishedContent.__init__(self, luid, u"datasource", tableau_rest_api_obj, tableau_server_version, default=default, logger_obj=logger_obj)
+        self.__available_capabilities = self.available_capabilities[self.api_version][u"datasource"]
+
+
+# Represents the GranteeCapabilities from any given.
+class GranteeCapabilities(TableauBase):
+    def __init__(self, obj_type, luid, content_type=None, tableau_server_version=u"9.2"):
+        super(self.__class__, self).__init__(tableau_server_version)
         if obj_type not in [u'group', u'user']:
             raise InvalidOptionException(u'GranteeCapabilites type must be "group" or "user"')
+        self.content_type = content_type
         self.obj_type = obj_type
         self.luid = luid
-        self.__capabilities = {
-            u'AddComment': None,
-            u'ChangeHierarchy': None,
-            u'ChangePermissions': None,
-            u'Connect': None,
-            u'Delete': None,
-            u'ExportData': None,
-            u'ExportImage': None,
-            u'ExportXml': None,
-            u'Filter': None,
-            u'ProjectLeader': None,
-            u'Read': None,
-            u'ShareView': None,
-            u'ViewComments': None,
-            u'ViewUnderlyingData': None,
-            u'WebAuthoring': None,
-            u'Write': None
-        }
+        # Get total set of capabilities, set to None by default
+        self.__capabilities = {}
+        self.__server_to_rest_capability_map = self.server_to_rest_capability_map
         self.__allowable_modes = [u'Allow', u'Deny', None]
-        self.__server_to_rest_capability_map = {
-            u'Add Comment': u'AddComment',
-            u'Move': u'ChangeHierarchy',
-            u'Set Permissions': u'ChangePermissions',
-            u'Connect': u'Connect',
-            u'Delete': u'Delete',
-            u'View Summary Data': u'ExportData',
-            u'Export Image': u'ExportImage',
-            u'Download': u'ExportXml',
-            u'Download/Save As': u'ExportXml',
-            u'Save As': u'ExportXml',
-            u'Filter': u'Filter',
-            u'Project Leader': u'ProjectLeader',
-            u'View': u'Read',
-            u'Share Customized': u'ShareView',
-            u'View Comments': u'ViewComments',
-            u'View Underlying Data': u'ViewUnderlyingData',
-            u'Web Edit': u'WebAuthoring',
-            u'Save': u'Write'
-            }
-
-        self.__role_map = [
-            u'Viewer',
-            u'Interactor',
-            u'Editor',
-            u'Data Source Connector',
-            u'Data Source Editor',
-            u'Publisher',
-            u'Project Leader'
-        ]
+        if content_type is not None:
+            # Defined in TableauBase superclass
+            self.__role_map = self.server_content_roles[self.api_version][content_type]
+            for cap in self.available_capabilities[self.api_version][content_type]:
+                if cap != u'all':
+                    self.__capabilities[cap] = None
 
     def set_capability(self, capability_name, mode):
-        if mode not in self.__allowable_modes:
-            raise InvalidOptionException(u'"{}" is not an allowable mode'.format(mode))
-        if capability_name not in self.__capabilities:
+        if capability_name not in self.__server_to_rest_capability_map.values():
             # If it's the Tableau UI naming, translate it over
             if capability_name in self.__server_to_rest_capability_map:
-                capability_name = self.__server_to_rest_capability_map[capability_name]
+                if capability_name != u'all':
+                    capability_name = self.__server_to_rest_capability_map[capability_name]
             else:
                 raise InvalidOptionException(u'"{}" is not a capability in REST API or Server'.format(capability_name))
         self.__capabilities[capability_name] = mode
@@ -2602,7 +3006,8 @@ class GranteeCapabilities:
         if capability_name not in self.__capabilities:
             # If it's the Tableau UI naming, translate it over
             if capability_name in self.__server_to_rest_capability_map:
-                capability_name = self.__server_to_rest_capability_map[capability_name]
+                if capability_name != u'all':
+                    capability_name = self.__server_to_rest_capability_map[capability_name]
             else:
                 raise InvalidOptionException(u'"{}" is not a capability in REST API or Server'.format(capability_name))
         self.__capabilities[capability_name] = None
@@ -2627,54 +3032,145 @@ class GranteeCapabilities:
 
     def set_all_to_deny(self):
         for cap in self.__capabilities:
-            self.__capabilities[cap] = u'Deny'
+            if cap != u'all':
+                self.__capabilities[cap] = u'Deny'
 
     def set_all_to_allow(self):
         for cap in self.__capabilities:
-            self.__capabilities[cap] = u'Allow'
+            if cap != u'all':
+                self.__capabilities[cap] = u'Allow'
 
     def set_capabilities_to_match_role(self, role):
         if role not in self.__role_map:
             raise InvalidOptionException(u'{} is not a recognized role'.format(role))
-        if role == u'Publisher':
-            self.set_all_to_allow()
-            self.set_capability(u'Connect', None)
-            self.set_capability(u'Download', None)
-            self.set_capability(u'Move', None)
-            self.set_capability(u'Delete', None)
-            self.set_capability(u'Set Permissions', None)
-            self.set_capability(u'Project Leader', None)
-        elif role == u'Interactor':
-            self.set_all_to_allow()
-            self.set_capability(u'Connect', None)
-            self.set_capability(u'Download', None)
-            self.set_capability(u'Move', None)
-            self.set_capability(u'Delete', None)
-            self.set_capability(u'Set Permissions', None)
-            self.set_capability(u'Project Leader', None)
-            self.set_capability(u'Save', None)
-        elif role == u'Viewer':
-            self.set_capability(u'View', u'Allow')
-            self.set_capability(u'Export Image', u'Allow')
-            self.set_capability(u'View Summary Data', u'Allow')
-            self.set_capability(u'View Comments', u'Allow')
-            self.set_capability(u'Add Comment', u'Allow')
-        elif role == u'Editor':
-            self.set_all_to_allow()
-            self.set_capability(u'Connect', None)
-            self.set_capability(u'Project Leader', None)
-        elif role == u'Data Source Connector':
-            self.set_capability(u'View', u'Allow')
-            self.set_capability(u'Connect', u'Allow')
-        elif role == u'Data Source Editor':
-            self.set_capability(u'View', u'Allow')
-            self.set_capability(u'Connect', u'Allow')
-            self.set_capability(u'Save', u'Allow')
-            self.set_capability(u'Download', u'Allow')
-            self.set_capability(u'Delete', u'Allow')
-            self.set_capability(u'Set Permissions', u'Allow')
-        elif role == u'Project Leader':
-            self.set_capability(u'Project Leader', u'Allow')
+
+        role_set_91_and_earlier_all_types = {
+            u'Publisher': {
+                u'all': True,
+                u'Connect': None,
+                u'Download': None,
+                u'Move': None,
+                u'Delete': None,
+                u'Set Permissions': None,
+                u'Project Leader': None,
+             },
+            u'Interactor': {
+                u'all': True,
+                u'Connect': None,
+                u'Download': None,
+                u'Move': None,
+                u'Delete': None,
+                u'Set Permissions': None,
+                u'Project Leader': None,
+                u'Save': None
+            },
+            u'Viewer': {
+                u'View': u'Allow',
+                u'Export Image': u'Allow',
+                u'View Summary Data': u'Allow',
+                u'View Comments': u'Allow',
+                u'Add Comment': u'Allow'
+            },
+            u'Editor': {
+                u'all': True,
+                u'Connect': None,
+                u'Project Leader': None
+            },
+            u'Data Source Connector': {
+                u'all': None,
+                u'Connect': None,
+                u'Project Leader': None
+            },
+            u'Data Source Editor': {
+                u'all': None,
+                u'View': u'Allow',
+                u'Connect': u'Allow',
+                u'Save': u'Allow',
+                u'Download': u'Allow',
+                u'Delete': u'Allow',
+                u'Set Permissions': u'Allow'
+            },
+            u'Project Leader': {
+                u'all': None,
+                u'Project Leader': u'Allow'
+            }
+        }
+
+        role_set = {
+            u'2.0': {
+                u"project": role_set_91_and_earlier_all_types,
+                u"workbook": role_set_91_and_earlier_all_types,
+                u"datasource": role_set_91_and_earlier_all_types
+            },
+            u'2.1': {
+                u"project": {
+                    u"Viewer": {
+                        u'all': None,
+                        u"View": u"Allow"
+                    },
+                    u"Publisher": {
+                        u'all': None,
+                        u"View": u"Allow",
+                        u"Save": u"Allow"
+                    },
+                    u"Project Leader": {
+                        u'all': None,
+                        u"Project Leader": u"Allow"
+                    }
+                },
+                u"workbook": {
+                    u"Viewer": {
+                        u'all': None,
+                        u'View': u'Allow',
+                        u'Export Image': u'Allow',
+                        u'View Summary Data': u'Allow',
+                        u'View Comments': u'Allow',
+                        u'Add Comment': u'Allow'
+                    },
+                    u"Interactor": {
+                        u'all': True,
+                        u'Download': None,
+                        u'Move': None,
+                        u'Delete': None,
+                        u'Set Permissions': None,
+                        u'Save': None
+                    },
+                    u"Editor": {
+                        u'all': True
+                    }
+                },
+                u"datasource": {
+                    u"Connector": {
+                        u'all': None,
+                        u'View': u'Allow',
+                        u'Connect': u'Allow'
+                    },
+                    u"Editor": {
+                        u'all': True
+                    }
+                }
+            }
+        }
+        if role not in role_set[self.api_version][self.content_type]:
+            raise InvalidOptionException(u"There is no role in Tableau Server available for {} called {}".format(
+                self.content_type, role
+            ))
+        role_capabilities = role_set[self.api_version][self.content_type][role]
+        if u"all" in role_capabilities:
+            if role_capabilities[u"all"] is True:
+                print "Setting all capabilities to Allow"
+                self.set_all_to_allow()
+            elif role_capabilities[u"all"] is False:
+                print "Setting all capabilities to Deny"
+                self.set_all_to_deny()
+        for cap in role_capabilities:
+            # Skip the all command, we handled it at the beginning
+            if cap == u'all':
+                continue
+            elif role_capabilities[cap] is not None:
+                self.set_capability(cap, role_capabilities[cap])
+            elif role_capabilities[cap] is None:
+                self.set_capability_to_unspecified(cap)
 
 
 # Represents a TWBX or TDSX and allows manipulation of the XML objects inside via their related object
@@ -2883,6 +3379,7 @@ class TableauDatasource(TableauBase):
         self.end_log_block()
         return xml
 
+
 class TableauWorkbook(TableauBase):
     def __init__(self, wb_string, logger_obj=None):
         self.logger = logger_obj
@@ -2949,6 +3446,7 @@ class TableauWorkbook(TableauBase):
             self.end_log_block()
             raise
 
+
 # Represents the actual Connection tag of a given datasource
 class TableauConnection(TableauBase):
     def __init__(self, connection_line, logger_obj=None):
@@ -3012,6 +3510,10 @@ class TableauConnection(TableauBase):
                 return True
             else:
                 return False
+
+    def set_sslmode(self, value='require'):
+        self.xml_obj.attrib["sslmode"] = value
+
 
 class TableauColumns(TableauBase):
     def __init__(self, column_lines, logger_obj=None):
