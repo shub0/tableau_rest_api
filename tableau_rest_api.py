@@ -23,28 +23,18 @@ from HTMLParser import HTMLParser
 
 # Implements logging features across all objects
 class TableauBase(object):
-    def __init__(self, tableau_server_version):
-        """
-        :type tableau_server_version: unicode
-        """
+    def __init__(self):
+        # In reverse order to work down until the acceptable version is found on the server, through login process
+        self.supported_versions = (u"9.3", u"9.2", u"9.1", u"9.0")
         self.logger = None
         self.luid_pattern = r"[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*-[0-9a-fA-F]*"
 
-        # API Versioning (starting in 9.2)
-        if unicode(tableau_server_version)in [u"9.2", u"9.3"]:
-            self.api_version = u"2.1"
-            self.tableau_namespace = u'http://tableau.com/api'
-            self.ns_map = {'t': 'http://tableau.com/api'}
-            self.version = tableau_server_version
-            self.ns_prefix = '{' + self.ns_map['t'] + '}'
-        elif unicode(tableau_server_version) in [u"9.0", u"9.1"]:
-            self.api_version = u"2.0"
-            self.tableau_namespace = u'http://tableausoftware.com/api'
-            self.ns_map = {'t': 'http://tableausoftware.com/api'}
-            self.version = tableau_server_version
-            self.ns_prefix = '{' + self.ns_map['t'] + '}'
-        else:
-            raise InvalidOptionException(u"Please specify tableau_server_version as a string. '9.0' or '9.2' etc...")
+        # Defaults, will get updated with each update. Overwritten by set_tableau_server_version
+        self.version = u"9.3"
+        self.api_version = u"2.2"
+        self.tableau_namespace = u'http://tableau.com/api'
+        self.ns_map = {'t': 'http://tableau.com/api'}
+        self.ns_prefix = '{' + self.ns_map['t'] + '}'
 
         self.site_roles = (
             u'Interactor',
@@ -79,6 +69,22 @@ class TableauBase(object):
                 )
             },
             u"2.1": {
+                u"project": (
+                    u'Viewer',
+                    u'Publisher',
+                    u'Project Leader'
+                ),
+                u"workbook": (
+                    u'Viewer',
+                    u'Interactor',
+                    u'Editor'
+                ),
+                u"datasource": (
+                    u'Editor',
+                    u'Connector'
+                )
+            },
+            u"2.2": {
                 u"project": (
                     u'Viewer',
                     u'Publisher',
@@ -187,10 +193,60 @@ class TableauBase(object):
                     u'Read',
                     u'Write'
                 )
+            },
+            u"2.2": {
+                u"project": (u'ProjectLeader', u"Read", u"Write"),
+                u"workbook": (
+                    u'AddComment',
+                    u'ChangeHierarchy',
+                    u'ChangePermissions',
+                    u'Delete',
+                    u'ExportData',
+                    u'ExportImage',
+                    u'ExportXml',
+                    u'Filter',
+                    u'Read',
+                    u'ShareView',
+                    u'ViewComments',
+                    u'ViewUnderlyingData',
+                    u'WebAuthoring',
+                    u'Write'
+                ),
+                u"datasource": (
+                    u'ChangePermissions',
+                    u'Connect',
+                    u'Delete',
+                    u'ExportXml',
+                    u'Read',
+                    u'Write'
+                )
             }
         }
 
         self.permissionable_objects = (u'datasource', u'project', u'workbook')
+
+    def set_tableau_server_version(self, tableau_server_version):
+        """
+        :type tableau_server_version: unicode
+        """
+        # API Versioning (starting in 9.2)
+        if unicode(tableau_server_version)in [u"9.2", u"9.3"]:
+            if unicode(tableau_server_version) == u"9.2":
+                self.api_version = u"2.1"
+            elif unicode(tableau_server_version) == u"9.3":
+                self.api_version = u"2.2"
+            self.tableau_namespace = u'http://tableau.com/api'
+            self.ns_map = {'t': 'http://tableau.com/api'}
+            self.version = tableau_server_version
+            self.ns_prefix = '{' + self.ns_map['t'] + '}'
+        elif unicode(tableau_server_version) in [u"9.0", u"9.1"]:
+            self.api_version = u"2.0"
+            self.tableau_namespace = u'http://tableausoftware.com/api'
+            self.ns_map = {'t': 'http://tableausoftware.com/api'}
+            self.version = tableau_server_version
+            self.ns_prefix = '{' + self.ns_map['t'] + '}'
+        else:
+            raise InvalidOptionException(u"Please specify tableau_server_version as a string. '9.0' or '9.2' etc...")
 
     # Logging Methods
     def enable_logging(self, logger_obj):
@@ -452,8 +508,8 @@ class Logger(object):
 
 class TableauRestApi(TableauBase):
     # Defines a class that represents a RESTful connection to Tableau Server. Use full URL (http:// or https://)
-    def __init__(self, server, username, password, site_content_url="", tableau_server_version="9.2"):
-        super(self.__class__, self).__init__(tableau_server_version)
+    def __init__(self, server, username, password, site_content_url=""):
+        super(self.__class__, self).__init__()
         if server.find('http') == -1:
             raise InvalidOptionException('Server URL must include http:// or https://')
 
@@ -462,18 +518,14 @@ class TableauRestApi(TableauBase):
         self.__username = username
         self.__password = password
         self.__token = None  # Holds the login token from the Sign In call
-        self.__site_luid = ""
-        self.__user_luid = ""
+        self.site_luid = ""
+        self.user_luid = ""
         self.__login_as_user_id = None
         self.__last_error = None
         self.logger = None
         self.__last_response_content_type = None
 
-
         # All defined in TableauBase superclass
-        self.__project_caps = self.available_capabilities[self.api_version][u"project"]
-        self.__datasource_caps = self.available_capabilities[self.api_version][u"datasource"]
-        self.__workbook_caps = self.available_capabilities[self.api_version][u"workbook"]
         self.__site_roles = self.site_roles
         self.__permissionable_objects = self.permissionable_objects
         self.__server_to_rest_capability_map = self.server_to_rest_capability_map
@@ -497,7 +549,7 @@ class TableauRestApi(TableauBase):
         if login is True:
             return self.__server + u"/api/" + self.api_version + u"/" + call
         else:
-            return self.__server + u"/api/" + self.api_version + u"/sites/" + self.__site_luid + u"/" + call
+            return self.__server + u"/api/" + self.api_version + u"/sites/" + self.site_luid + u"/" + call
 
     #
     # Internal REST API Helpers (mostly XML definitions that are reused between methods)
@@ -580,34 +632,65 @@ class TableauRestApi(TableauBase):
             new_gcap_obj_list.append(new_gcap_obj)
         return new_gcap_obj_list
 
-#
+    #
+    # Factory methods for PublishedContent and GranteeCapabilities objects
+    #
+    def get_project_object_by_luid(self, luid):
+        proj_obj = Project(luid, self, self.version, self.logger)
+        return proj_obj
+
+    def get_workbook_object_by_luid(self, luid):
+        wb_obj = Workbook(luid, self, self.version, self.logger)
+        return wb_obj
+
+    def get_datasource_object_by_luid(self, luid):
+        ds_obj = Datasource(luid, self, self.version, self.logger)
+        return ds_obj
+
+    def get_grantee_capabilities_object(self, obj_type, luid, content_type=None):
+        gcap_obj = GranteeCapabilities(obj_type, luid, content_type, self.version)
+        return gcap_obj
+
+    #
     # Sign-in and Sign-out
     #
 
     def signin(self):
         self.start_log_block()
-        if self._site_content_url.lower() in ['default', '']:
-            login_payload = u'<tsRequest><credentials name="{}" password="{}" >'.format(self.__username, self.__password)
-            login_payload += u'<site /></credentials></tsRequest>'
-        else:
-            login_payload = u'<tsRequest><credentials name="{}" password="{}" >'.format(self.__username, self.__password)
-            login_payload += u'<site contentUrl="{}" /></credentials></tsRequest>'.format(self._site_content_url)
-        url = self.build_api_url(u"auth/signin", login=True)
+        for version in self.supported_versions:
+            self.log(u'Trying version {}'.format(version))
+            self.set_tableau_server_version(version)
+            if self._site_content_url.lower() in ['default', '']:
+                login_payload = u'<tsRequest><credentials name="{}" password="{}" >'.format(self.__username, self.__password)
+                login_payload += u'<site /></credentials></tsRequest>'
+            else:
+                login_payload = u'<tsRequest><credentials name="{}" password="{}" >'.format(self.__username, self.__password)
+                login_payload += u'<site contentUrl="{}" /></credentials></tsRequest>'.format(self._site_content_url)
+            url = self.build_api_url(u"auth/signin", login=True)
 
-        self.log(u'Logging in via: {}'.format(url.encode('utf-8')))
-        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
-        api.set_xml_request(login_payload)
-        api.set_http_verb('post')
-        self.log(u'Login payload is\n {}'.format(login_payload))
-        api.request_from_api(0)
-        # self.log(api.get_raw_response())
-        xml = api.get_response()
-        credentials_element = xml.xpath(u'//t:credentials', namespaces=self.ns_map)
-        self.__token = credentials_element[0].get("token").encode('utf-8')
-        self.log(u"Token is " + self.__token)
-        self.__site_luid = credentials_element[0].xpath(u"//t:site", namespaces=self.ns_map)[0].get("id").encode('utf-8')
-        self.__user_luid = credentials_element[0].xpath(u"//t:user", namespaces=self.ns_map)[0].get("id").encode('utf-8')
-        self.log(u"Site ID is " + self.__site_luid)
+            self.log(u'Logging in via: {}'.format(url.encode('utf-8')))
+            api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
+            api.set_xml_request(login_payload)
+            api.set_http_verb('post')
+            self.log(u'Login payload is\n {}'.format(login_payload))
+
+            try:
+                api.request_from_api(0)
+                # self.log(api.get_raw_response())
+                xml = api.get_response()
+                credentials_element = xml.xpath(u'//t:credentials', namespaces=self.ns_map)
+                self.__token = credentials_element[0].get("token").encode('utf-8')
+                self.log(u"Token is " + self.__token)
+                self.site_luid = credentials_element[0].xpath(u"//t:site", namespaces=self.ns_map)[0].get("id").encode('utf-8')
+                self.user_luid = credentials_element[0].xpath(u"//t:user", namespaces=self.ns_map)[0].get("id").encode('utf-8')
+                self.log(u"Site ID is " + self.site_luid)
+                self.log(u"Trying to get workbooks for user to test if API version is really available")
+                self.query_workbooks()
+                # if that all works we're good with the version we tried, get out of this loop
+                break
+            # If that particular location doesn't exist, move on down the list
+            except RecoverableHTTPException:
+                continue
         self.end_log_block()
 
     def signout(self):
@@ -1130,7 +1213,7 @@ class TableauRestApi(TableauBase):
     # You can only query a site you have logged into this way. Better to use methods that run through query_sites
     def query_current_site(self):
         self.start_log_block()
-        site = self.query_resource(u"sites/" + self.__site_luid, login=True)
+        site = self.query_resource(u"sites/" + self.site_luid, login=True)
         self.end_log_block()
         return site
 
@@ -1202,7 +1285,7 @@ class TableauRestApi(TableauBase):
     # This uses the logged in username for convenience
     def query_workbooks(self):
         self.start_log_block()
-        workbooks = self.query_workbooks_for_user_by_luid(self.__user_luid)
+        workbooks = self.query_workbooks_for_user_by_luid(self.user_luid)
         self.end_log_block()
         return workbooks
 
@@ -1299,7 +1382,7 @@ class TableauRestApi(TableauBase):
     # Assume the current logged in user
     def query_workbook_by_name_in_project(self, wb_name, p_name_or_luid=False):
         self.start_log_block()
-        wb = self.query_workbook_for_user_luid_by_workbook_name_in_project(self.__user_luid, wb_name, p_name_or_luid)
+        wb = self.query_workbook_for_user_luid_by_workbook_name_in_project(self.user_luid, wb_name, p_name_or_luid)
         self.end_log_block()
         return wb
 
@@ -2250,10 +2333,18 @@ class TableauRestApi(TableauBase):
             self.send_delete_request(url)
         self.end_log_block()
 
+    def delete_groups_by_luid(self, group_luid_s):
+        self.start_log_block()
+        group_luids = self.to_list(group_luid_s)
+        for group_luid in group_luids:
+            url = self.build_api_url(u"groups/{}".format(group_luid))
+            self.send_delete_request(url)
+        self.end_log_block()
+
     # Can only delete a site that you have signed into
     def delete_current_site(self):
         self.start_log_block()
-        url = self.build_api_url(u"sites/{}".format(self.__site_luid), login=True)
+        url = self.build_api_url(u"sites/{}".format(self.site_luid), login=True)
         self.send_delete_request(url)
         self.end_log_block()
 
@@ -2325,11 +2416,11 @@ class TableauRestApi(TableauBase):
                 self.log(u'Deleting for object LUID {}'.format(luid))
                 # Check capabiltiies are allowed
                 for cap in permissions_dict:
-                    if obj_type == u'project' and cap not in self.__project_caps:
+                    if obj_type == u'project' and cap not in self.available_capabilities[self.api_version][u"project"]:
                         raise InvalidOptionException(u"'{}' is not a valid capability for a project".format(cap))
-                    if obj_type == u'datasource' and cap not in self.__datasource_caps:
+                    if obj_type == u'datasource' and cap not in self.available_capabilities[self.api_version][u"datasource"]:
                         self.log(u"'{}' is not a valid capability for a datasource".format(cap))
-                    if obj_type == u'workbook' and cap not in self.__workbook_caps:
+                    if obj_type == u'workbook' and cap not in self.available_capabilities[self.api_version][u"workbook"]:
                         self.log(u"'{}' is not a valid capability for a workbook".format(cap))
 
                     if permissions_dict.get(cap) == u'Allow':
@@ -2363,11 +2454,11 @@ class TableauRestApi(TableauBase):
                 self.log(u'Deleting for object LUID {}'.format(luid))
                 # Check capabiltiies are allowed
                 for cap in permissions_dict:
-                    if obj_type == u'project' and cap not in self.__project_caps:
+                    if obj_type == u'project' and cap not in self.available_capabilities[self.api_version][u"project"]:
                         raise InvalidOptionException(u"'{}' is not a valid capability for a project".format(cap))
-                    if obj_type == u'datasource' and cap not in self.__datasource_caps:
+                    if obj_type == u'datasource' and cap not in self.available_capabilities[self.api_version][u"datasource"]:
                         self.log(u"'{}' is not a valid capability for a datasource".format(cap))
-                    if obj_type == u'workbook' and cap not in self.__workbook_caps:
+                    if obj_type == u'workbook' and cap not in self.available_capabilities[self.api_version][u"workbook"]:
                         self.log(u"'{}' is not a valid capability for a workbook".format(cap))
 
                     if permissions_dict.get(cap) == u'Allow':
@@ -2620,7 +2711,7 @@ class TableauRestApi(TableauBase):
 # Handles all of the actual HTTP calling
 class RestXmlRequest(TableauBase):
     def __init__(self, url, token=None, logger=None, ns_map_url='http://tableau.com/api'):
-        super(self.__class__, self).__init__(tableau_server_version=u"9.2")
+        super(self.__class__, self).__init__()
         self.__defined_response_types = (u'xml', u'png', u'binary')
         self.__defined_http_verbs = (u'post', u'get', u'put', u'delete')
         self.__base_url = url
@@ -2702,7 +2793,7 @@ class RestXmlRequest(TableauBase):
             # If already a parameter, just append
             if '?' in url:
                 param_separator = '&'
-            url = url + "{}pageNumber={}".format(param_separator, str(page_number))
+            url += "{}pageNumber={}".format(param_separator, str(page_number))
 
         self.__last_url_request = url
 
@@ -2769,10 +2860,18 @@ class RestXmlRequest(TableauBase):
 
             utf8_parser = etree.XMLParser(encoding='utf-8')
             xml = etree.parse(StringIO(raw_error_response), parser=utf8_parser)
-            tableau_error = xml.xpath(u'//t:error', namespaces=self.ns_map)
-            error_code = tableau_error[0].get('code')
-            tableau_detail = xml.xpath(u'//t:detail', namespaces=self.ns_map)
-            detail_text = tableau_detail[0].text
+            try:
+                tableau_error = xml.xpath(u'//t:error', namespaces=self.ns_map)
+                error_code = tableau_error[0].get('code')
+                tableau_detail = xml.xpath(u'//t:detail', namespaces=self.ns_map)
+                detail_text = tableau_detail[0].text
+            # This is to capture an error from the old API version when doing tests
+            except IndexError:
+                old_ns_map = {'t': 'http://tableausoftware.com/api'}
+                tableau_error = xml.xpath(u'//t:error', namespaces=old_ns_map)
+                error_code = tableau_error[0].get('code')
+                tableau_detail = xml.xpath(u'//t:detail', namespaces=old_ns_map)
+                detail_text = tableau_detail[0].text
             detail_luid_match_obj = re.search(self.__luid_pattern, detail_text)
             if detail_luid_match_obj:
                 detail_luid = detail_luid_match_obj.group(0)
@@ -2803,14 +2902,15 @@ class RestXmlRequest(TableauBase):
             xml = etree.parse(StringIO(self.__raw_response), parser=utf8_parser)
             # Set the XML object to the first returned. Will be replaced if there is pagination
             self.__xml_object = xml
+            combined_xml_string = u'<tsResponse xmlns="{}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="{} {}/ts-api-2.0.xsd">'.format(
+                    self.ns_map['t'], self.ns_map['t'], self.ns_map['t'])
             for pagination in xml.xpath(u'//t:pagination', namespaces=self.ns_map):
 
                 # page_number = int(pagination.get('pageNumber'))
                 page_size = int(pagination.get('pageSize'))
                 total_available = int(pagination.get('totalAvailable'))
                 total_pages = int(math.ceil(float(total_available) / float(page_size)))
-                combined_xml_string = u'<tsResponse xmlns="{}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="{} {}/ts-api-2.0.xsd">'.format(
-                    self.ns_map['t'], self.ns_map['t'], self.ns_map['t'])
+
                 full_xml_obj = None
                 for obj in xml.getroot():
                     if obj.tag != 'pagination':
@@ -2836,6 +2936,9 @@ class RestXmlRequest(TableauBase):
                             if obj.tag != 'pagination':
                                 full_xml_obj = obj
                         new_xml_text_lines = etree.tostring(full_xml_obj, encoding='utf8').decode('utf8').split("\n")
+                        # New style output is not split into multiple lines, add them back in then split
+                        if len(new_xml_text_lines) == 1:
+                            new_xml_text_lines = new_xml_text_lines[0].replace('>', '>\n').split("\n")
                         a = new_xml_text_lines[1:]  # Chop first tag
                         xml_text_lines.extend(a[:-2])  # Add the newly brought in lines to the overall text lines
 
@@ -2853,17 +2956,14 @@ class RestXmlRequest(TableauBase):
 # Represents a published workbook, project or datasource
 class PublishedContent(TableauBase):
     def __init__(self, luid, obj_type, tableau_rest_api_obj, tableau_server_version=u"9.2", default=False, logger_obj=None):
-        TableauBase.__init__(self, tableau_server_version)
+        TableauBase.__init__(self)
+        self.set_tableau_server_version(tableau_server_version)
         """
         :type tableau_rest_api_obj: TableauRestApi
         """
         self.logger = logger_obj
         self.luid = luid
         self.t_rest_api = tableau_rest_api_obj
-        if tableau_server_version in [u"9.2", u"9.3"]:
-            self.version = u"9.2"
-        elif tableau_server_version in [u"9.1", u"9.0"]:
-            self.version = u"9.1"
         self.obj_type = obj_type
         self.default = default
         self.obj_perms_xml = None
@@ -2938,14 +3038,14 @@ class Project(PublishedContent):
     def __init__(self, luid, tableau_rest_api_obj, tableau_server_version=u"9.2", logger_obj=None):
         PublishedContent.__init__(self, luid, u"project", tableau_rest_api_obj, tableau_server_version, logger_obj=logger_obj)
         # projects in 9.2 have child workbook and datasource permissions
-        if self.api_version == u"2.1":
+        if self.api_version != u"2.0":
                 self.workbook_default = Workbook(self.luid, self.t_rest_api, default=True, logger_obj=logger_obj)
                 self.datasource_default = PublishedContent(self.luid, u"datasource", self.t_rest_api, default=True, logger_obj=logger_obj)
         self.__available_capabilities = self.available_capabilities[self.api_version][u"project"]
 
     def lock_permissions(self):
         self.start_log_block()
-        if self.api_version == u"2.1":
+        if self.api_version != u"2.0":
             self.t_rest_api.lock_project_permissions(self.luid)
         else:
             self.log(u"Permissions cannot be locked in 9.1 and previous")
@@ -2953,7 +3053,7 @@ class Project(PublishedContent):
 
     def unlock_permissions(self):
         self.start_log_block()
-        if self.api_version == u"2.1":
+        if self.api_version != u"2.0":
             self.t_rest_api.unlock_project_permissions(self.luid)
         else:
             self.log(u"Permissions cannot be locked in 9.1 and previous")
@@ -2975,7 +3075,8 @@ class Datasource(PublishedContent):
 # Represents the GranteeCapabilities from any given.
 class GranteeCapabilities(TableauBase):
     def __init__(self, obj_type, luid, content_type=None, tableau_server_version=u"9.2"):
-        super(self.__class__, self).__init__(tableau_server_version)
+        super(self.__class__, self).__init__()
+        self.set_tableau_server_version(tableau_server_version)
         if obj_type not in [u'group', u'user']:
             raise InvalidOptionException(u'GranteeCapabilites type must be "group" or "user"')
         self.content_type = content_type
@@ -3103,6 +3204,54 @@ class GranteeCapabilities(TableauBase):
                 u"datasource": role_set_91_and_earlier_all_types
             },
             u'2.1': {
+                u"project": {
+                    u"Viewer": {
+                        u'all': None,
+                        u"View": u"Allow"
+                    },
+                    u"Publisher": {
+                        u'all': None,
+                        u"View": u"Allow",
+                        u"Save": u"Allow"
+                    },
+                    u"Project Leader": {
+                        u'all': None,
+                        u"Project Leader": u"Allow"
+                    }
+                },
+                u"workbook": {
+                    u"Viewer": {
+                        u'all': None,
+                        u'View': u'Allow',
+                        u'Export Image': u'Allow',
+                        u'View Summary Data': u'Allow',
+                        u'View Comments': u'Allow',
+                        u'Add Comment': u'Allow'
+                    },
+                    u"Interactor": {
+                        u'all': True,
+                        u'Download': None,
+                        u'Move': None,
+                        u'Delete': None,
+                        u'Set Permissions': None,
+                        u'Save': None
+                    },
+                    u"Editor": {
+                        u'all': True
+                    }
+                },
+                u"datasource": {
+                    u"Connector": {
+                        u'all': None,
+                        u'View': u'Allow',
+                        u'Connect': u'Allow'
+                    },
+                    u"Editor": {
+                        u'all': True
+                    }
+                }
+            },
+            u'2.2': {
                 u"project": {
                     u"Viewer": {
                         u'all': None,

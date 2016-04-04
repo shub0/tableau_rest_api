@@ -11,6 +11,7 @@ Examples and explanations are at https://www.tableauandbehold.com
 --- Version history ---
 1.5.2: works with 9.1 and before. Python 2.7 compatible
 2.0.0+: works with 9.2 (and previous versions as well). Python 2.7 compatible
+2.1.0+: works with 9.3 (previous versions as well). Python 2.7 compatible
 
 --- Usage Guide ---
 
@@ -28,9 +29,13 @@ from tableau_rest_api.tableau_rest_api import *
 1.2 TableauRestApi class
 The main class you need to get started is 
 
-TableauRestApi(server, username, password, site_content_url="", tableau_server_version="9.2")
+TableauRestApi(server, username, password, site_content_url="")
 
-The tableau_server_version flag must be set if you are using a version of Tableau earlier than 9.2.
+Note: If you are using the 2.0 version of the library, you must set the tableau_server_version flag like if your server is on 9.1 or 9.0:
+
+TableauRestApi(server, username, password, site_content_url="", tableau_server_version="9.1")
+
+Version 2.1 and beyond of the library automatically detects the Tableau Server version and this parameter is unnecessary.
 
 You need to intialize at least one object of this class. 
 Ex.:
@@ -265,15 +270,19 @@ Any time you want to set or change permissions, you should instantiate a Grantee
 
 The "obj_type" argument takes either u"group" or u"user". It is highly recommended that you set your permissions using groups rather than users, and tableau_rest_api often defaults to group where possible on this recommendation. content_type is one of: u"project", u"workbook", or u"datasource". Giving the content_type allows for setting only applicable capabilities for the given object. 
 
-GranteeCapabilities(obj_type, luid, content_type=None, tableau_server_version=u"9.2")
-
-The version matters for GranteeCapabilities, as project capabilities shifted significantly with Tableau Server 9.2.
+TableauRestApi.get_grantee_capabilities_object(obj_type, luid, content_type=None)
 
 Ex. 
 team_group_luid = t.query_group_luid_by_name(u"Team Member")
-team_gcap_obj = GranteeCapabilities(u"group", team_group_luid, content_type=u"project")
+team_gcap_obj = get_grantee_capabilities_object(u"group", team_group_luid, content_type=u"project")
 
 Internally, tableau_rest_api represents the full set of granteeCapabilities on a content object as a Python list of GranteeCapabilities objects. You will see this in some of the code as "gcap_obj_list". If you want to pass a single object to a method that takes a list, simply do the [gcap_obj, ] Python syntax.
+
+In version 2.0 of the library, you must create the GranteeCapabilities object directly like this:
+
+GranteeCapabilities(obj_type, luid, content_type=None, tableau_server_version=u"9.2")
+
+The version matters for GranteeCapabilities, as project capabilities shifted significantly with Tableau Server 9.2.
 
 4.2 Setting Capabilities
 The GranteeCapabilities class has methods for setting capabilities individually, or matching the selectable "roles" in the Tableau Server UI. 
@@ -306,6 +315,11 @@ There are three classes that represent the state of published content to a serve
 
 Project obviously represents a project. In API Verison 2.1, a Project also contains a child Workbook and Datasource object that represent the Default Permissions that can be set for that project. IN API Version 2.0, the Project simply has a full set of capabilities that include those that apply to a workbook or a datasource. This reflects the difference in Tableau Server itself. If you are still on 9.1 or before, make sure to set your tableau_server_version argument so that the Project class behaves correctly.
 
+TableauRestApi.get_project_object_by_luid(luid)
+TableauRestApi.get_datasource_object_by_luid(luid)
+TableauRestApi.get_workbook_object_by_luid(luid)
+
+In version 2.0 of the library, you had to declare this separately:
 Project(luid, tableau_rest_api_obj, tableau_server_version=u"9.2", logger_obj=None)
 
 Project implements the lock and unlock methods that only work in API Version 2.1 (9.2 and on)
@@ -328,21 +342,21 @@ set_permission_by_gcap_obj does all of the necessary checks to send the simplest
 
 Ex.
 sandbox_proj_luid = t.query_project_luid_by_name(u"Sandbox")
-sandbox_proj = Project(sandbox_proj_luid, t, logger_obj=logger)
+sandbox_proj = t.get_project_object_by_luid(sandbox_proj_luid)
 sandbox_proj.lock_permissions()
 
 team_group_luid = t.query_group_luid_by_name(u"Team Member")
-team_gcap_obj = GranteeCapabilities(u"group", team_group_luid, content_type=u"project")
+team_gcap_obj = t.get_grantee_capabilities_object(u"group", team_group_luid, content_type=u"project")
 team_gcap_obj.set_capabilities_to_match_role(u"Publisher")
 sandbox_proj.set_permissions_by_gcap_obj(team_gcap_obj)
 
 # Setting default permissions for workbook
-team_gcap_obj = GranteeCapabilities(u"group", team_group_luid, content_type=u"workbook")
+team_gcap_obj = t.get_grantee_capabilities_object(u"group", team_group_luid, content_type=u"workbook")
 team_gcap_obj.set_capabilities_to_match_role(u"Interactor")
 sandbox_proj.workbook_default.set_permissions_by_gcap_obj(team_gcap_obj)
 
 # Setting default permissions for data source
-team_gcap_obj = GranteeCapabilities(u"group", team_group_luid, content_type=u"datasource")
+team_gcap_obj = t.get_grantee_capabilities_object(u"group", team_group_luid, content_type=u"datasource")
 team_gcap_obj.set_capabilities_to_match_role(u"Editor")
 sandbox_proj.datasource_default.set_permissions_by_gcap_obj(team_gcap_obj)
 
