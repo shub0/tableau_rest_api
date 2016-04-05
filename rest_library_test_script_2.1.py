@@ -3,15 +3,15 @@ import urllib2
 import time
 
 # Use your own server credentials
-username = 'bhowell'
-password = 'aq12wsDe#'
+username = ''
+password = ''
 
 # Allows for testing against multiple versions of Tableau Server. Feel free to use just one
 servers = {
-           # "9.0": "10.212.39.7",
-           # "9.1": "10.212.39.2",
-           # "9.2": "10.212.39.6",
-           "9.3": "10.212.39.8"
+           # "9.0": "127.0.0.1",
+           # "9.1": "127.0.0.1",
+           # "9.2": "127.0.0.1",
+           "9.3": "127.0.0.1"
            }
 
 
