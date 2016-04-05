@@ -1457,6 +1457,16 @@ class TableauRestApi(TableauBase):
         self.end_log_block()
         return vws
 
+    def query_views_for_site(self, usage=False):
+        self.start_log_block()
+        if self.api_version in [u"2.0", u"2.1"]:
+            raise InvalidOptionException(u"Query Views for Site only available in Tableau Server 9.3+")
+        if usage not in [True, False]:
+            raise InvalidOptionException(u'Usage can only be set to True or False')
+        vws = self.query_resource(u"sites/views?includeUsageStatistics={}".format(str(usage).lower()))
+        self.end_log_block()
+        return vws
+
     def query_workbook_permissions_by_luid(self, wb_luid):
         self.start_log_block()
         perms = self.query_resource(u"workbooks/{}/permissions".format(wb_luid))
@@ -1517,6 +1527,30 @@ class TableauRestApi(TableauBase):
 
     #
     # End Workbook Query Methods
+    #
+
+    #
+    # Begin scheduler querying methods
+    #
+
+    def query_schedules(self):
+        self.start_log_block()
+        if self.api_version in [u"2.0", u"2.1"]:
+            raise InvalidOptionException(u"query_schedules is only available in Tableau Server 9.3+")
+        schedules = self.query_resource(u"schedules")
+        self.end_log_block()
+        return schedules
+
+    def query_extract_refresh_tasks_by_schedule_luid(self, schedule_luid):
+        self.start_log_block()
+        if self.api_version in [u"2.0", u"2.1"]:
+            raise InvalidOptionException(u"query_extract_refresh_tasks... is only available in Tableau Server 9.3+")
+        tasks = self.query_resource(u"schedules/{}/extracts".format(schedule_luid))
+        self.end_log_block()
+        return tasks
+
+    #
+    # End Scheduler Querying Methods
     #
 
     #
