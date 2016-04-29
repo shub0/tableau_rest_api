@@ -471,9 +471,10 @@ class TableauBase(object):
 
 
 class Logger(object):
-    def __init__(self, filename):
+    def __init__(self, filename, mode = "a"):
+        mode += "b"
         try:
-            lh = open(filename, 'wb')
+            lh = open(filename, mode)
             self.__log_handle = lh
         except IOError:
             print u"Error: File '{}' cannot be opened to write for logging".format(filename)
@@ -697,7 +698,7 @@ class TableauRestApi(TableauBase):
         self.start_log_block()
         url = self.build_api_url(u"auth/signout", login=True)
         self.log(u'Logging out via: {}'.format(url.encode('utf-8')))
-        api = RestXmlRequest(url, False, self.logger, ns_map_url=self.ns_map['t'])
+        api = RestXmlRequest(url, self.__token, self.logger, ns_map_url=self.ns_map['t'])
         api.set_http_verb('post')
         api.request_from_api()
         self.log(u'Signed out successfully')
@@ -1418,6 +1419,13 @@ class TableauRestApi(TableauBase):
         else:
             self.end_log_block()
             raise MultipleMatchesFoundException(u'More than one workbook found by name {} without a project specified').format(wb_name)
+
+    # Use logged in users
+    def query_workbook_luid_by_workbook_name_in_project(self, wb_name, p_name_or_luid=False):
+        self.start_log_blokc()
+        luid = self.query_workbook_luid_by_workbook_name_in_project(self.__username, wb_name, p_name_or_luid)
+        self.end_log_block()
+        return luid
 
     # Less safe than _in_project method above
     def query_workbook_luid_for_username_by_workbook_name(self, username, wb_name):
@@ -2566,8 +2574,8 @@ class TableauRestApi(TableauBase):
     # Start Publish methods -- workbook, datasources, file upload
     #
 
-    ''' Publish process can go two way: 
-        (1) Initiate File Upload (2) Publish workbook/datasource (less than 64MB) 
+    ''' Publish process can go two way:
+        (1) Initiate File Upload (2) Publish workbook/datasource (less than 64MB)
         (1) Initiate File Upload (2) Append to File Upload (3) Publish workbook to commit (over 64 MB)
     '''
 
@@ -3782,4 +3790,3 @@ class RecoverableHTTPException(Exception):
 class MultipleMatchesFoundException(Exception):
     def __init__(self, count):
         self.msg = u'Found {} matches for the request, something has the same name'.format(unicode(count))
-
