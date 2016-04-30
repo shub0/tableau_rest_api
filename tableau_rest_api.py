@@ -3507,6 +3507,8 @@ class TableauDatasource(TableauBase):
                         columns_flag = False
                     elif columns_flag is True and line.find('layout') != -1:
                         columns_flag = False
+                    elif columns_flag is True and line.find('</datasource') != -1:
+                        columns_flag = False
                     if columns_flag is True:
                         self.columns_xml += line
                     elif start_flag is False and columns_flag is False:
@@ -3570,12 +3572,11 @@ class TableauDatasource(TableauBase):
         self.end_log_block()
         return xml
 
-
 class TableauWorkbook(TableauBase):
     def __init__(self, wb_string, logger_obj=None):
         self.logger = logger_obj
         self.log(u'Initialzing a TableauWorkbook object')
-        self.wb_string = wb_string
+        self.wb_string = unicode(wb_string, errors="ignore")
         self.wb = StringIO(self.wb_string)
         self.start_xml = ""
         self.end_xml = ""
@@ -3583,7 +3584,6 @@ class TableauWorkbook(TableauBase):
         start_flag = True
         ds_flag = False
         current_ds = ""
-
         if self.logger is not None:
             self.enable_logging(self.logger)
 
@@ -3599,6 +3599,7 @@ class TableauWorkbook(TableauBase):
                 if line.find(u"</datasource>") != -1:
                     self.log(u"Building TableauDatasource object")
                     ds_obj = TableauDatasource(current_ds, logger_obj=self.logger)
+                    self.log(u"Building data source " + ds_obj.get_datasource_name() + " completed")
                     self.datasources[ds_obj.get_datasource_name()] = ds_obj
                     current_ds = ""
             if line.find(u"<datasources") != -1 and start_flag is True:
