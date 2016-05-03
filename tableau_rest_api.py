@@ -3626,6 +3626,11 @@ class TableauWorkbook(TableauBase):
         self.end_log_block()
         return xml
 
+    def set_datasources(self, data_source_name, data_source_obj):
+        self.start_log_block()
+        self.datasources[data_source_name] = data_source_obj
+        self.end_log_block()
+
     def save_workbook_xml(self, filename):
         self.start_log_block()
         try:
