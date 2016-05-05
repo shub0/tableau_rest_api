@@ -1,10 +1,11 @@
 Implementation of Tableau REST API library in Python
 
 Written by Bryant Howell (bhowell@tableau.com).
+Modified by Shubo Liu (shubo@conviva.com)
 
 This is free and available for anyone to use and modify.
 
-Not an official product or officially supported by Tableau Inc. in any way. 
+Not an official product or officially supported by Tableau Inc. in any way.
 
 Examples and explanations are at https://www.tableauandbehold.com
 
@@ -16,7 +17,7 @@ Examples and explanations are at https://www.tableauandbehold.com
 --- Usage Guide ---
 
 1. Getting Started
-All strings passed into tableau_rest_api should be Unicode. The library is completely Unicode throughout and passing text in this way ensures no issues with encoding. tableau_rest_api uses LXML library for all its XML parsing and generation. Some of the methods return LXML objects which can be manipulated via standard LXML methods. 
+All strings passed into tableau_rest_api should be Unicode. The library is completely Unicode throughout and passing text in this way ensures no issues with encoding. tableau_rest_api uses LXML library for all its XML parsing and generation. Some of the methods return LXML objects which can be manipulated via standard LXML methods.
 
 tableau_rest_api was programmed using PyCharm and works very well in that IDE. It is highly recommended if you are going to code with tableau_rest_api.
 
@@ -27,7 +28,7 @@ from tableau_rest_api.tableau_rest_api import *
 
 
 1.2 TableauRestApi class
-The main class you need to get started is 
+The main class you need to get started is
 
 TableauRestApi(server, username, password, site_content_url="")
 
@@ -37,7 +38,7 @@ TableauRestApi(server, username, password, site_content_url="", tableau_server_v
 
 Version 2.1 and beyond of the library automatically detects the Tableau Server version and this parameter is unnecessary.
 
-You need to intialize at least one object of this class. 
+You need to intialize at least one object of this class.
 Ex.:
 t = TableauRestApi(u"http://127.0.0.1", u"admin", u"adminsp@ssw0rd", site_content_url=u"site1")
 
@@ -51,7 +52,7 @@ If you want to log something in your script into this log, you can call
 
 Logger.log(l)
 
-where l is a unicode string. You do not need to add a "\n", it will be added automatically 
+where l is a unicode string. You do not need to add a "\n", it will be added automatically
 
 
 1.4 Enabling logging for TableauRestApi class
@@ -66,13 +67,13 @@ Ex.
 t = TableauRestApi(u"http://127.0.0.1", u"admin", u"adminsp@ssw0rd", site_content_url=u"site1")
 logger = Logger(u"log_file.txt")
 t.enable_logging(logger)
-t.signin() 
+t.signin()
 
-Now that you are signed-in, the TableauRestApi object will hold all of the session state information and can be used to make any number of calls to that Site. 
+Now that you are signed-in, the TableauRestApi object will hold all of the session state information and can be used to make any number of calls to that Site.
 
 
 1.6 Connecting to multiple sites
-The Tableau REST API only allows a session to a single Site at a time. To deal with multiple sites, you can create multiple TableauRestApi objects representing each site. To sign in to a site, you need the site_content_url, which is the portion of the URL that represents the Site. 
+The Tableau REST API only allows a session to a single Site at a time. To deal with multiple sites, you can create multiple TableauRestApi objects representing each site. To sign in to a site, you need the site_content_url, which is the portion of the URL that represents the Site.
 
 TableauRestApi.query_all_site_content_urls()
 
@@ -86,11 +87,11 @@ for site_content_url in site_content_urls:
     t = TableauRestApi(u"http://127.0.0.1", u"admin", u"adminsp@ssw0rd". site_content_url=site_content_url)
     t.signin()
     ...
-    
+
 2. Basics and Querying
 
 2.1 LUIDs - Locally Unique IDentifiers
-The Tableau REST API represents each object on the server (project, workbook, user, group, etc.) with a Locally Unique IDentifier (LUID). Every command other than the sign-in to a particular site (which uses the site_content_url) requires a LUID. LUIDs are returned when you create an object on the server, or they can be retrieved by the Query methods and then searched to find the matching LUID. tableau_rest_api has a large set of methods that perform lookup and translation so that you can work with the "pretty" names and let the library find the correct LUIDs for you. 
+The Tableau REST API represents each object on the server (project, workbook, user, group, etc.) with a Locally Unique IDentifier (LUID). Every command other than the sign-in to a particular site (which uses the site_content_url) requires a LUID. LUIDs are returned when you create an object on the server, or they can be retrieved by the Query methods and then searched to find the matching LUID. tableau_rest_api has a large set of methods that perform lookup and translation so that you can work with the "pretty" names and let the library find the correct LUIDs for you.
 
 
 2.2 Plural querying methods
@@ -122,22 +123,22 @@ There are numerous methods for finding an LUID based on the name of a piece of c
 
 TableauRestApi.query_group_luid_by_name(name)
 
-These methods are very useful when you need a LUID to generate another action.     
+These methods are very useful when you need a LUID to generate another action.
 
 
 2.4 Singular querying methods
-There are methods for getting the XML just for a single object, but they actually require calling to the plural methods internally in many cases where there is no singular method actuall implemented in Tableau Server. For example, the following two lookup methods: 
+There are methods for getting the XML just for a single object, but they actually require calling to the plural methods internally in many cases where there is no singular method actuall implemented in Tableau Server. For example, the following two lookup methods:
 
 TableauRestApi.query_project_by_luid(luid)
 TableauRestApi.query_project_by_name(name)
 
-actually use query_projects() then use xpath querying to get just the single project that matches that LUID or name (by_name actually does the lookup for the LUID as well). 
+actually use query_projects() then use xpath querying to get just the single project that matches that LUID or name (by_name actually does the lookup for the LUID as well).
 
 The simplest methods follow this pattern:
 
 TableauRestApi.query_project(name_or_luid)
 
-and accurately branch off depending on what is passed to them.  
+and accurately branch off depending on what is passed to them.
 
 2.5 Querying Permissions
 There are methods to query permissions directly, but it's best to let them be handled via the PublishedContent class, in conjunction with the GranteeCapabilities class. This is documented further down
@@ -158,7 +159,7 @@ TableauRestApi.download_workbook_by_luid(wb_luid, filename=None, no_obj_return=F
 3. Administrative Actions (adding, removing, and syncing)
 
 3.1 Adding Users
-There are two separate actions in the Tableau REST API to add a new user. First, the user is created, and then additional details are set using an update command. tableau_rest_api implements these two together as: 
+There are two separate actions in the Tableau REST API to add a new user. First, the user is created, and then additional details are set using an update command. tableau_rest_api implements these two together as:
 
 TableauRestApi.add_user(username, fullname, site_role=u'Unlicensed', password=None, email=None, update_if_exists=False)
 
@@ -181,7 +182,7 @@ Ex.
 new_luid = t.create_group(u"Awesome People")
 
 3.3 Adding users to a Group
-Once users have been created, they can be added into a group via the following method, which can take either a single string or a list/tuple set. Anywhere you see the "luid_s" pattern in a parameter, it means you can pass a unicode string or a list of unicode strings to make the action happen to all of those in the list. 
+Once users have been created, they can be added into a group via the following method, which can take either a single string or a list/tuple set. Anywhere you see the "luid_s" pattern in a parameter, it means you can pass a unicode string or a list of unicode strings to make the action happen to all of those in the list.
 
 TableauRestApi.add_users_to_group_by_luid(user_luid_s, group_luid)
 
@@ -202,15 +203,15 @@ Here's an example for updating a datasource:
 TableauRestApi.update_datasource(name_or_luid, new_datasource_name=None, new_project_luid=None,
                           new_owner_luid=None, proj_name_or_luid=False
 
-Note that if you want to change the actual content of a workbook or datasource, that requires a Publish action with Overwrite set to True                          
-                          
+Note that if you want to change the actual content of a workbook or datasource, that requires a Publish action with Overwrite set to True
+
 3.6 Deleting / Removing Content
 Methods with "remove_" are used for user membership, where the user still exists on the server at the end.
 
 TableauRestApi.remove_users_from_site_by_luid(user_luid_s)
 TableauRestApi.remove_users_from_group_by_luid(user_luid_s, group_luid)
 
-Methods that start with "delete_" truly delete the content 
+Methods that start with "delete_" truly delete the content
 
 
 TableauRestApi.delete_workbooks_by_luid(wb_luid_s)
@@ -253,7 +254,7 @@ The tableau_rest_api library handles permissions via the GranteeCapabilities and
 
 Permissions are by far the most complex issue in the Tableau REST API. Every content object (Project, Workbook or Datasource) can have permissions (known as "capabilities" in the REST API) set for each member object (Group or User). This is represented in the REST API by granteeCapabilities XML, which is a relatively complex XML object. Capabilities can also be "unspecified", and if this is the case, they simply are missing from the granteeCapabilities XML.
 
-Additionally, there is no "update" functionality for permissions capabilities -- if you want to submit changes, you must first delete out those permissions. Thus any "update" must involve determining the current state of the permissions on an object and removing those permissions before assigning the new permissions. 
+Additionally, there is no "update" functionality for permissions capabilities -- if you want to submit changes, you must first delete out those permissions. Thus any "update" must involve determining the current state of the permissions on an object and removing those permissions before assigning the new permissions.
 
 The most efficient algorithm for sending an update is thus:
 
@@ -266,13 +267,13 @@ tableau_rest_api handles this through two concepts -- the GranteeCapabilities ob
 
 
 4.1 GranteeCapabilities class
-Any time you want to set or change permissions, you should instantiate a GranteeCapabilities object to represent that set of permissions/capabilities. 
+Any time you want to set or change permissions, you should instantiate a GranteeCapabilities object to represent that set of permissions/capabilities.
 
-The "obj_type" argument takes either u"group" or u"user". It is highly recommended that you set your permissions using groups rather than users, and tableau_rest_api often defaults to group where possible on this recommendation. content_type is one of: u"project", u"workbook", or u"datasource". Giving the content_type allows for setting only applicable capabilities for the given object. 
+The "obj_type" argument takes either u"group" or u"user". It is highly recommended that you set your permissions using groups rather than users, and tableau_rest_api often defaults to group where possible on this recommendation. content_type is one of: u"project", u"workbook", or u"datasource". Giving the content_type allows for setting only applicable capabilities for the given object.
 
 TableauRestApi.get_grantee_capabilities_object(obj_type, luid, content_type=None)
 
-Ex. 
+Ex.
 team_group_luid = t.query_group_luid_by_name(u"Team Member")
 team_gcap_obj = get_grantee_capabilities_object(u"group", team_group_luid, content_type=u"project")
 
@@ -285,7 +286,7 @@ GranteeCapabilities(obj_type, luid, content_type=None, tableau_server_version=u"
 The version matters for GranteeCapabilities, as project capabilities shifted significantly with Tableau Server 9.2.
 
 4.2 Setting Capabilities
-The GranteeCapabilities class has methods for setting capabilities individually, or matching the selectable "roles" in the Tableau Server UI. 
+The GranteeCapabilities class has methods for setting capabilities individually, or matching the selectable "roles" in the Tableau Server UI.
 
 The two allowable modes are u"Allow" and u"Deny", whereas setting unspecified has its own method.
 
@@ -301,7 +302,7 @@ There is also a method to match the roles from the Tableau Server UI. It is awar
 
 GranteeCapabilities.set_capabilities_to_match_role(role)
 
-Ex. 
+Ex.
 team_group_luid = t.query_group_luid_by_name(u"Team Member")
 team_p_gcap_obj = GranteeCapabilities(u"group", team_group_luid, content_type=u"project")
 team_p_gcap_obj.set_capabilities_to_match_role(u"Publisher")
@@ -338,7 +339,7 @@ PublishedContent.set_permissions_by_gcap_obj(new_gcap_obj)
 PublishedContent.get_gcap_obj_list()
 PublishedContent.get_permissions_xml()
 
-set_permission_by_gcap_obj does all of the necessary checks to send the simplest set of calls to update the content object. It takes a single GranteeCapabilities object at a time so that the comparisons are simple and easy to understand. 
+set_permission_by_gcap_obj does all of the necessary checks to send the simplest set of calls to update the content object. It takes a single GranteeCapabilities object at a time so that the comparisons are simple and easy to understand.
 
 Ex.
 sandbox_proj_luid = t.query_project_luid_by_name(u"Sandbox")
@@ -362,12 +363,12 @@ sandbox_proj.datasource_default.set_permissions_by_gcap_obj(team_gcap_obj)
 
 
 5. Publishing Content
-The Tableau REST API can publish both data sources and workbooks, either as TWB / TDS files or TWBX or TDSX files. It actually has two different methods of publishing; one as a single upload, and the other which chunks the upload. tableau_rest_api encapsulates all this into two methods that detect the right calls to make. The default threshold is 20 MB for a file before it switches to chunking. This is set by the "single_upload_limit" variable. 
+The Tableau REST API can publish both data sources and workbooks, either as TWB / TDS files or TWBX or TDSX files. It actually has two different methods of publishing; one as a single upload, and the other which chunks the upload. tableau_rest_api encapsulates all this into two methods that detect the right calls to make. The default threshold is 20 MB for a file before it switches to chunking. This is set by the "single_upload_limit" variable.
 
-If a workbook references a published data source, that data source must be published first. Additionally, unlike Tableau Desktop, the REST API will not find linked files and upload them. A workbook with a "live connection" to an Excel file, for example, must be saved as a TWBX rather than a TWB for an upload to work correctly. The error messages if you do not follow this order are not very clear. 
+If a workbook references a published data source, that data source must be published first. Additionally, unlike Tableau Desktop, the REST API will not find linked files and upload them. A workbook with a "live connection" to an Excel file, for example, must be saved as a TWBX rather than a TWB for an upload to work correctly. The error messages if you do not follow this order are not very clear.
 
 5.1 Publishing a Workbook or Datasource
-The publish methods were orginally designed to upload directly from disk, and if you specify a text string for the filename argument, tableau_rest_api will attempt to open those files and then upload them. 
+The publish methods were orginally designed to upload directly from disk, and if you specify a text string for the filename argument, tableau_rest_api will attempt to open those files and then upload them.
 
 TableauRestApi.publish_workbook(workbook_filename, workbook_name, project_luid, overwrite=False, connection_username=None, connection_password=None, save_credentials=True, show_tabs=True)
 
@@ -380,7 +381,7 @@ You can also pass in a TableauWorkbook object into publish_workbook, or a Tablea
 tableau_rest_api implements some features that go beyond the Tableau REST API, but are extremely useful when dealing with a large number of workbooks or datasources, particularly for tenented Sites. These methods actually allow unsupported changes to the Tableau workbook or datasource XML. If something breaks with them, blame the author of the library and not Tableau Support, who won't help you with them.
 
 6.1 TableauWorkbook, TableauDatasource and TableauConnection classes
-The TableauWorkbook and TableauDatasource classes are representations of the TWB and TDS XML files, and contain other sub-objects which allow them to change the XML of TWB or TDS to do things like changing the database name that a workbook is pointing to. 
+The TableauWorkbook and TableauDatasource classes are representations of the TWB and TDS XML files, and contain other sub-objects which allow them to change the XML of TWB or TDS to do things like changing the database name that a workbook is pointing to.
 
 TableauWorkbook.get_datasources()
 
