@@ -3501,33 +3501,121 @@ class TableauDatasource(TableauBase):
         self.end_log_block()
         return xml
 
+class TableauParameter(TableauBase):
+    def __init__(self, param_string, logger_obj=None):
+        self.logger = logger_obj
+        if self.logger is not None:
+            self.enable_logging(self.logger)
+        self.log(u"Initializing a TableauParameter object")
+        utf8_parser = etree.XMLParser(encoding='utf-8')
+        self.param_element = etree.parse(StringIO(param_string), utf8_parser).getroot()
+        self.param_type = self.param_element.get("param-domain-type")
+        self.data_type = self.param_element.get("datatype")
+
+    def get_param_type(self):
+        return self.param_type
+
+    def __update_by_list(self, content_list):
+        self.start_log_block()
+        self.log(u"Setting list paramter")
+        self.log(str(content_list))
+        if self.param_type != "list":
+            raise InvalidOptionException("Not implemented for %s type" % self.param_type)
+        prefix = u'"' if self.data_type == "string" else u''
+        self.param_element.attrib["value"] = u'%s%s%s' % (prefix, content_list[0][0], prefix)
+        self.param_element.attrib["alias"] = unicode(content_list[0][1])
+        # content list formated as [ (value, alias) ]
+        new_alias_string = u"\n<aliases>\n" + \
+                           "\n".join([ u"<alias key=\'%s%s%s\' value=\'%s\' />" % (prefix, element[0], prefix, element[1]) for element in content_list ]) + \
+                           u"\n</aliases>\n"
+
+        new_member_string = u"\n<members>\n" + \
+                            "\n".join([ u"<member alias=\'%s\' value=\'%s%s%s\' />" % (element[1], prefix, element[0], prefix) for element in content_list ]) + \
+                            u"\n</members>\n"
+
+        new_alias_element   = etree.parse(StringIO(new_alias_string)).getroot()
+        new_member_element  = etree.parse(StringIO(new_member_string)).getroot()
+        old_alias_element   = self.param_element.find("aliases")
+        old_memeber_element = self.param_element.find("members")
+        self.param_element.replace(old_alias_element, new_alias_element)
+        self.param_element.replace(old_memeber_element, new_member_element)
+        self.end_log_block()
+
+    def update_by_content(self, content):
+        if self.param_type == "range" and isinstance(content, dict):
+            self.__update_by_range(content)
+        elif self.param_type == "list" and isinstance(content, list):
+            self.__update_by_list(content)
+        else:
+            raise InvalidOptionException("Not implemented for %s type with content  %s" % (self.param_type, type(content)))
+
+    def __update_by_range(self, content_dict):
+        self.start_log_block()
+        self.log(u"Setting range parameter")
+        self.log(str(content_dict))
+        self.param_element.attrib["value"] = str(content_dict["min"])
+        config = self.param_element.find("range")
+        config.attrib["max"] = str(content_dict["max"])
+        config.attrib["min"] = str(content_dict["min"])
+        config.attrib["granularity"] = str(content_dict["granularity"])
+        self.end_log_block()
+
+    def get_parameter_xml_string(self):
+        return etree.tostring(self.param_element, pretty_print=True)
+
 class TableauWorkbook(TableauBase):
     def __init__(self, wb_string, logger_obj=None):
         self.logger = logger_obj
         self.log(u'Initialzing a TableauWorkbook object')
-        self.wb_string = wb_string
-        self.wb = StringIO(self.wb_string)
-        self.start_xml = ""
-        self.end_xml = ""
         self.datasources = {}
         if self.logger is not None:
             self.enable_logging(self.logger)
         utf8_parser = etree.XMLParser(encoding='utf-8')
-        xml = etree.parse(self.wb, parser=utf8_parser)
-        self.datasources = { ds.get("caption"): ds for ds in xml.xpath("/workbook/datasources/datasource") }
-        parameter_elements = [ element for element in xml.xpath("/workbook/datasources/datasource") if element.get("name") == "Parameters" ][0]
+        self.wb_obj = etree.parse(StringIO(wb_string), parser=utf8_parser)
+        self.datasources = { ds.get("caption"): ds for ds in self.wb_obj.xpath("/workbook/datasources/datasource") }
+        parameter_elements = [ element for element in self.wb_obj.xpath("/workbook/datasources/datasource") if element.get("name") == "Parameters" ][0]
         self.parameters = { parameter.get("caption"): parameter for parameter in parameter_elements }
 
     def get_datasources(self):
         return self.ds
 
     def get_workbook_xml(self):
-        return self.wb_string
-
-    def set_datasources(self, data_source_name, data_source_obj):
         self.start_log_block()
-        self.log("Set %s by external datasource obj" % (data_source_name))
-        self.datasources[data_source_name] = data_source_obj
+        xml = etree.tostring(self.wb_obj, pretty_print = True)
+        self.end_log_block()
+        return xml
+
+    def set_parameter_by_xml_element(self, parameter_name, parameter_obj):
+        self.start_log_block()
+        self.log("Set %s by external xml object" % parameter_name)
+        self.log(etree.tostring(parameter_obj, pretty_print=True))
+        # Update xml_obj
+        old_parameter_obj = self.parameters[parameter_name]
+        parent_element_obj = old_parameter_obj.getparent()
+        parent_element_obj.replace(old_parameter_obj, parameter_obj)
+        # Update this obj
+        self.parameters[parameter_name] = parameter_obj
+        self.end_log_block()
+
+    def set_parameter_by_content(self, parameter_name, parameter_content):
+        self.start_log_block()
+        old_parameter_element = self.parameters[parameter_name]
+        old_parameter_obj = TableauParameter(etree.tostring(old_parameter_element), self.logger)
+        old_parameter_obj.update_by_content(parameter_content)
+        new_parameter_element = etree.parse(StringIO(old_parameter_obj.get_parameter_xml_string())).getroot()
+        self.set_parameter_by_xml_element(parameter_name, new_parameter_element)
+        self.end_log_block()
+
+    def set_datasource_by_xml_element(self, datasource_name, datasource_obj):
+        self.start_log_block()
+        self.log("Set %s by external xml object" % (data_source_name))
+        self.log(etree.tostring(dartasource_obj, pretty_print = True))
+        # Update xml_obj
+        old_datasource_obj = self.datasources[datasource_name]
+        parent_element_obj = old_datasource_obj.getparent()
+        parent_element_obj.replace(old_datasource_obj, datasource_obj)
+        # Update this obj
+        self.datasources[datasource_name] = datasource_obj
         self.end_log_block()
 
     def save_workbook_xml(self, filename):
@@ -3548,38 +3636,38 @@ class TableauConnection(TableauBase):
         self.logger = logger_obj
         # Building from a <connection> tag
         if not connection_obj:
-            self.xml_obj = connection_obj
+            self.tc_obj = connection_obj
             self.statement_obj = connection_obj.find("relation")
         else:
             raise InvalidOptionException(u"Must create a TableauConnection from a Connection line")
 
     def set_dbname(self, new_db_name):
-        if self.xml_obj.get("dbname") is not None:
-            self.xml_obj.attrib["dbname"] = new_db_name
+        if self.tc_obj.get("dbname") is not None:
+            self.tc_obj.attrib["dbname"] = new_db_name
 
     def get_dbname(self):
-        return self.xml_obj.get("dbname")
+        return self.tc_obj.get("dbname")
 
     def set_server(self, new_server):
-        if self.xml_obj.get("server") is not None:
-            self.xml_obj.attrib["server"] = new_server
+        if self.tc_obj.get("server") is not None:
+            self.tc_obj.attrib["server"] = new_server
 
     def get_server(self):
-        return self.xml_obj.get("server")
+        return self.tc_obj.get("server")
 
     def set_username(self, new_username):
-        if self.xml_obj.get("username") is not None:
-            self.xml_obj.attrib["username"] = new_username
+        if self.tc_obj.get("username") is not None:
+            self.tc_obj.attrib["username"] = new_username
 
     def set_port(self, new_port):
-        if self.xml_obj.get("port") is not None:
-            self.xml_obj.attrib["port"] = new_port
+        if self.tc_obj.get("port") is not None:
+            self.tc_obj.attrib["port"] = new_port
 
     def get_port(self):
-        return self.xml_obj.get("port")
+        return self.tc_obj.get("port")
 
     def get_connection_type(self):
-        return self.xml_obj.get('class')
+        return self.tc_obj.get('class')
 
     def support_custom_query():
         return not self.statement_obj
@@ -3597,25 +3685,25 @@ class TableauConnection(TableauBase):
             raise NotImplementedError
 
     def get_xml_string(self):
-        xml_with_ending_tag = etree.tostring(self.xml_obj)
+        xml_with_ending_tag = etree.tostring(self.tc_obj)
         # Slice off the extra connection ending tag
         return xml_with_ending_tag[0:xml_with_ending_tag.find('</connection>')]
 
     def is_published_datasource(self):
-        if self.xml_obj.get("class") == 'sqlproxy':
+        if self.tc_obj.get("class") == 'sqlproxy':
             return True
         else:
             return False
 
     def is_windows_auth(self):
-        if self.xml_obj.get("authentication") is not None:
-            if self.xml_obj.get("authentication") == 'sspi':
+        if self.tc_obj.get("authentication") is not None:
+            if self.tc_obj.get("authentication") == 'sspi':
                 return True
             else:
                 return False
 
     def set_sslmode(self, value='require'):
-        self.xml_obj.attrib["sslmode"] = value
+        self.tc_obj.attrib["sslmode"] = value
 
 class TableauColumns(TableauBase):
     def __init__(self, column_obj, logger_obj=None):
@@ -3655,7 +3743,6 @@ class TableauColumns(TableauBase):
         xml = xml_with_extra_tags[first_tag_place:xml_with_extra_tags.find('</columns>')-1]
         self.end_log_block()
         return xml
-
 
 # Exceptions
 class NoMatchFoundException(Exception):
