@@ -1,7 +1,7 @@
 Implementation of Tableau REST API library in Python
 
 Written by Bryant Howell (bhowell@tableau.com).
-Modified by Shubo Liu (shubo@conviva.com)
+Modified by Shubo Liu (shubo.liu.mail@gmail.com)
 
 This is free and available for anyone to use and modify.
 
